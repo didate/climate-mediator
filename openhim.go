@@ -122,7 +122,7 @@ func (c *OpenHIMClient) channelConfig(name, pattern, path string) ChannelConfig 
 			Port:    mustAtoi(c.cfg.MediatorPort),
 			Path:    path,
 			Primary: true,
-			Type:    c.cfg.MediatorScheme,
+			Type:    "http",
 			Secured: c.cfg.MediatorScheme == "https",
 		}},
 	}
