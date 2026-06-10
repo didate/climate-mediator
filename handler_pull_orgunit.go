@@ -66,7 +66,7 @@ func handlePullOrgUnit(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 			go func() {
 				defer wg.Done()
 				for ou := range jobs {
-					loc := OrgUnitToLocation(ou, cfg.DHIS2TargetURL)
+					loc := OrgUnitToLocation(ou, cfg.OUIdentifierSystem)
 					if err := hapi.PutLocation(loc); err != nil {
 						log.Printf("Save Location failed [%s]: %v", ou.ID, err)
 						mu.Lock()

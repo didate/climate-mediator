@@ -18,6 +18,7 @@ services:
       HAPI_FHIR_URL: https://fhir.dev.${DOMAIN}/fhir
       MAPPING_FILE: /mapping.json
       MAX_WORKERS: "5"
+      OU_IDENTIFIER_SYSTEM: "urn:dhis2:entrepot:organisationUnits"
     networks:
       - proxy
     labels:

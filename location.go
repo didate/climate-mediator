@@ -22,14 +22,14 @@ type Position struct {
 	Latitude  float64 `json:"latitude"`
 }
 
-func OrgUnitToLocation(ou OrgUnit, dhis2BaseURL string) *FHIRLocation {
+func OrgUnitToLocation(ou OrgUnit, identifierSystem string) *FHIRLocation {
 	loc := &FHIRLocation{
 		ResourceType: "Location",
 		ID:           ou.ID,
 		Name:         ou.Name,
 		Status:       "active",
 		Identifier: []Identifier{{
-			System: dhis2BaseURL + "/api/organisationUnits",
+			System: identifierSystem,
 			Value:  ou.ID,
 		}},
 	}
