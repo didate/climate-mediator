@@ -140,9 +140,67 @@ func (c *CDSClient) pollUntilReady(jobID string) error {
 }
 
 func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int) (*CDSGridData, error) {
-	// GET /api/retrieve/v1/jobs/{job_id}/results
+	// GET /api/retrieve/v1/jobs/{job_id}/results returns JSON with download link
 	resultsURL := fmt.Sprintf("%s/retrieve/v1/jobs/%s/results", c.APIURL, jobID)
 	req, _ := http.NewRequest("GET", resultsURL, nil)
+	req.Header.Set("PRIVATE-TOKEN", c.APIKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get results failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	// Parse the results response to find the download URL
+	var results struct {
+		Asset struct {
+			Value struct {
+				Href string `json:"href"`
+			} `json:"value"`
+		} `json:"asset"`
+	}
+	// Try parsing as structured response
+	if err := json.Unmarshal(body, &results); err == nil && results.Asset.Value.Href != "" {
+		return c.downloadFile(results.Asset.Value.Href, variable, year, month)
+	}
+
+	// Try as a map with various structures
+	var resultMap map[string]interface{}
+	if err := json.Unmarshal(body, &resultMap); err == nil {
+		// Look for any href/location/url in the response
+		if href := findDownloadURL(resultMap); href != "" {
+			return c.downloadFile(href, variable, year, month)
+		}
+	}
+
+	// Log the response for debugging
+	log.Printf("CDS results response: %s", string(body))
+	return nil, fmt.Errorf("could not find download URL in results response")
+}
+
+func findDownloadURL(m map[string]interface{}) string {
+	for k, v := range m {
+		switch val := v.(type) {
+		case string:
+			if k == "href" || k == "location" || k == "url" {
+				return val
+			}
+		case map[string]interface{}:
+			if url := findDownloadURL(val); url != "" {
+				return url
+			}
+		}
+	}
+	return ""
+}
+
+func (c *CDSClient) downloadFile(downloadURL, variable string, year, month int) (*CDSGridData, error) {
+	log.Printf("Downloading CDS data from: %s", downloadURL)
+
+	req, _ := http.NewRequest("GET", downloadURL, nil)
 	req.Header.Set("PRIVATE-TOKEN", c.APIKey)
 
 	resp, err := c.http.Do(req)
@@ -152,7 +210,7 @@ func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int) (*
 	defer resp.Body.Close()
 
 	// Save to temp file for processing
-	tmpFile, err := os.CreateTemp("", "cds-*.nc")
+	tmpFile, err := os.CreateTemp("", "cds-*.grib")
 	if err != nil {
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}
