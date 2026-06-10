@@ -41,21 +41,23 @@ func NewCDSClient(apiURL, apiKey string) *CDSClient {
 func (c *CDSClient) FetchMonthlyData(dataset, variable, productType string, year, month int) (*CDSGridData, error) {
 	// Guinea bounding box: lat 7-13°N, lon -15 to -7°W
 	// Using 0.25° grid resolution
+	// CDS API v1: POST /api/retrieve/v1/processes/{dataset}/execution
 	requestBody := map[string]interface{}{
-		"product_type": []string{productType},
-		"variable":     []string{variable},
-		"year":         []string{fmt.Sprintf("%d", year)},
-		"month":        []string{fmt.Sprintf("%02d", month)},
-		"time":         []string{"00:00"},
-		"data_format":  "grib",
-		"download_format": "unarchived",
-		"area":         []float64{13, -15, 7, -7}, // [N, W, S, E]
+		"inputs": map[string]interface{}{
+			"product_type": []string{productType},
+			"variable":     []string{variable},
+			"year":         []string{fmt.Sprintf("%d", year)},
+			"month":        []string{fmt.Sprintf("%02d", month)},
+			"time":         []string{"00:00"},
+			"data_format":  "grib",
+			"area":         []float64{13, -15, 7, -7}, // [N, W, S, E]
+		},
 	}
 
 	body, _ := json.Marshal(requestBody)
 
 	// Submit request
-	url := fmt.Sprintf("%s/datasets/%s", c.APIURL, dataset)
+	url := fmt.Sprintf("%s/retrieve/v1/processes/%s/execution", c.APIURL, dataset)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -77,28 +79,29 @@ func (c *CDSClient) FetchMonthlyData(dataset, variable, productType string, year
 		return nil, fmt.Errorf("CDS API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	// Parse response to get request ID
+	// Parse response to get job ID
 	var submitResp struct {
-		State    string `json:"state"`
-		RequestID string `json:"request_id"`
-		Location string `json:"location"`
+		JobID  string `json:"jobID"`
+		Status string `json:"status"`
 	}
 	if err := json.Unmarshal(respBody, &submitResp); err != nil {
 		return nil, fmt.Errorf("parse CDS response: %w", err)
 	}
 
+	log.Printf("CDS job submitted: %s (status: %s)", submitResp.JobID, submitResp.Status)
+
 	// Poll for completion
-	downloadURL, err := c.pollUntilReady(submitResp.RequestID)
+	err = c.pollUntilReady(submitResp.JobID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Download the data
-	return c.downloadAndParse(downloadURL, variable, year, month)
+	// Download the results
+	return c.downloadAndParse(submitResp.JobID, variable, year, month)
 }
 
-func (c *CDSClient) pollUntilReady(requestID string) (string, error) {
-	url := fmt.Sprintf("%s/tasks/%s", c.APIURL, requestID)
+func (c *CDSClient) pollUntilReady(jobID string) error {
+	url := fmt.Sprintf("%s/retrieve/v1/jobs/%s", c.APIURL, jobID)
 
 	for i := 0; i < 120; i++ { // Max 20 minutes
 		time.Sleep(10 * time.Second)
@@ -116,35 +119,30 @@ func (c *CDSClient) pollUntilReady(requestID string) (string, error) {
 		resp.Body.Close()
 
 		var status struct {
-			State    string `json:"state"`
-			Location string `json:"location"`
-			Results  []struct {
-				Location string `json:"location"`
-			} `json:"result"`
+			JobID   string `json:"jobID"`
+			Status  string `json:"status"`
+			Message string `json:"message"`
 		}
 		json.Unmarshal(body, &status)
 
-		log.Printf("CDS request %s: state=%s", requestID, status.State)
+		log.Printf("CDS job %s: status=%s", jobID, status.Status)
 
-		switch status.State {
-		case "completed", "successful":
-			if len(status.Results) > 0 {
-				return status.Results[0].Location, nil
-			}
-			if status.Location != "" {
-				return status.Location, nil
-			}
-			return "", fmt.Errorf("completed but no download URL")
-		case "failed":
-			return "", fmt.Errorf("CDS request failed: %s", string(body))
+		switch status.Status {
+		case "successful":
+			return nil
+		case "failed", "rejected", "dismissed":
+			return fmt.Errorf("CDS job failed: %s", string(body))
 		}
+		// "accepted", "running" → keep polling
 	}
 
-	return "", fmt.Errorf("CDS request timed out after 20 minutes")
+	return fmt.Errorf("CDS job timed out after 20 minutes")
 }
 
-func (c *CDSClient) downloadAndParse(downloadURL, variable string, year, month int) (*CDSGridData, error) {
-	req, _ := http.NewRequest("GET", downloadURL, nil)
+func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int) (*CDSGridData, error) {
+	// GET /api/retrieve/v1/jobs/{job_id}/results
+	resultsURL := fmt.Sprintf("%s/retrieve/v1/jobs/%s/results", c.APIURL, jobID)
+	req, _ := http.NewRequest("GET", resultsURL, nil)
 	req.Header.Set("PRIVATE-TOKEN", c.APIKey)
 
 	resp, err := c.http.Do(req)
