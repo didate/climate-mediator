@@ -3,74 +3,46 @@ package main
 import (
 	"fmt"
 	"math"
-	"os"
 
-	"github.com/nilsmagnus/grib/griblib"
+	"github.com/batchatco/go-native-netcdf/netcdf"
+	"github.com/batchatco/go-native-netcdf/netcdf/api"
 )
 
-// parseNetCDF parses a GRIB file and extracts grid data for the given variable.
+// parseNetCDF parses a NetCDF file and extracts grid data for the given variable.
 func parseNetCDF(path, variable string, year, month int) (*CDSGridData, error) {
-	f, err := os.Open(path)
+	nc, err := netcdf.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open file: %w", err)
+		return nil, fmt.Errorf("open netcdf: %w", err)
 	}
-	defer f.Close()
+	defer nc.Close()
 
-	messages, err := griblib.ReadMessages(f)
+	// Read latitude
+	lats, err := getFloat64Values(nc, "latitude")
 	if err != nil {
-		return nil, fmt.Errorf("read grib: %w", err)
+		return nil, fmt.Errorf("read latitude: %w", err)
 	}
 
-	if len(messages) == 0 {
-		return nil, fmt.Errorf("no messages in grib file")
+	// Read longitude
+	lons, err := getFloat64Values(nc, "longitude")
+	if err != nil {
+		return nil, fmt.Errorf("read longitude: %w", err)
 	}
 
-	// Use the first message
-	msg := messages[0]
-
-	data := msg.Section7.Data
-	if len(data) == 0 {
-		return nil, fmt.Errorf("empty data in grib message")
+	// Find the data variable
+	varName := findDataVar(nc, variable)
+	if varName == "" {
+		return nil, fmt.Errorf("variable %q not found in netcdf (available: %v)", variable, nc.ListVariables())
 	}
 
-	// Extract grid definition (Grid0 = lat/lon grid)
-	gridDef, ok := msg.Section3.Definition.(*griblib.Grid0)
-	if !ok {
-		return nil, fmt.Errorf("unsupported grid type, expected Grid0 (lat/lon)")
+	dataVals, err := getFloat64Values(nc, varName)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", varName, err)
 	}
 
-	nLat := int(gridDef.Nj)
-	nLon := int(gridDef.Ni)
+	nLat := len(lats)
+	nLon := len(lons)
 
-	latStart := float64(gridDef.La1) / 1e6
-	latEnd := float64(gridDef.La2) / 1e6
-	lonStart := float64(gridDef.Lo1) / 1e6
-	lonEnd := float64(gridDef.Lo2) / 1e6
-
-	// Build lat/lon arrays
-	lats := make([]float64, nLat)
-	lons := make([]float64, nLon)
-
-	if nLat > 1 {
-		latStep := (latEnd - latStart) / float64(nLat-1)
-		for i := 0; i < nLat; i++ {
-			lats[i] = latStart + float64(i)*latStep
-		}
-	} else {
-		lats[0] = latStart
-	}
-
-	if nLon > 1 {
-		lonStep := (lonEnd - lonStart) / float64(nLon-1)
-		for i := 0; i < nLon; i++ {
-			lons[i] = lonStart + float64(i)*lonStep
-		}
-	} else {
-		lons[0] = lonStart
-	}
-
-	// Reshape data to 2D [lat][lon]
-	result := &CDSGridData{
+	grid := &CDSGridData{
 		Variable: variable,
 		Year:     year,
 		Month:    month,
@@ -79,17 +51,91 @@ func parseNetCDF(path, variable string, year, month int) (*CDSGridData, error) {
 		Values:   make([][]float64, nLat),
 	}
 
+	// Reshape: skip time dimension if present (take first time step)
 	for i := 0; i < nLat; i++ {
-		result.Values[i] = make([]float64, nLon)
+		grid.Values[i] = make([]float64, nLon)
 		for j := 0; j < nLon; j++ {
 			idx := i*nLon + j
-			if idx < len(data) {
-				result.Values[i][j] = float64(data[idx])
+			if idx < len(dataVals) {
+				grid.Values[i][j] = dataVals[idx]
 			} else {
-				result.Values[i][j] = math.NaN()
+				grid.Values[i][j] = math.NaN()
 			}
 		}
 	}
 
-	return result, nil
+	return grid, nil
+}
+
+// getFloat64Values reads a variable and converts to []float64.
+func getFloat64Values(nc api.Group, name string) ([]float64, error) {
+	v, err := nc.GetVariable(name)
+	if err != nil {
+		return nil, err
+	}
+	return toFloat64Slice(v.Values)
+}
+
+// CDS ERA5 variable short names mapping
+var cdsShortNames = map[string]string{
+	"2m_temperature":          "t2m",
+	"2m_dewpoint_temperature": "d2m",
+	"total_precipitation":     "tp",
+}
+
+func findDataVar(nc api.Group, variable string) string {
+	vars := nc.ListVariables()
+
+	// Try exact match
+	for _, v := range vars {
+		if v == variable {
+			return v
+		}
+	}
+
+	// Try short name
+	if short, ok := cdsShortNames[variable]; ok {
+		for _, v := range vars {
+			if v == short {
+				return v
+			}
+		}
+	}
+
+	// Skip dimension variables, return first data variable
+	skip := map[string]bool{"latitude": true, "longitude": true, "time": true, "expver": true, "number": true}
+	for _, v := range vars {
+		if !skip[v] {
+			return v
+		}
+	}
+
+	return ""
+}
+
+func toFloat64Slice(vals interface{}) ([]float64, error) {
+	switch v := vals.(type) {
+	case []float64:
+		return v, nil
+	case []float32:
+		out := make([]float64, len(v))
+		for i, val := range v {
+			out[i] = float64(val)
+		}
+		return out, nil
+	case []int16:
+		out := make([]float64, len(v))
+		for i, val := range v {
+			out[i] = float64(val)
+		}
+		return out, nil
+	case []int32:
+		out := make([]float64, len(v))
+		for i, val := range v {
+			out[i] = float64(val)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unsupported data type: %T", vals)
+	}
 }

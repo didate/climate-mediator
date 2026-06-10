@@ -1,4 +1,6 @@
+github.com/batchatco/go-native-netcdf v0.0.0-20260314195334-c3bf89299976 h1:DF9e55hXnNjnqOdG+6/agZtprp1Z1yWq5zJ1tmjH4kI=
+github.com/batchatco/go-native-netcdf v0.0.0-20260314195334-c3bf89299976/go.mod h1:9DR4lzem/4OwxigpgjJC4P3KYofnwgppaCdylYB3yqg=
+github.com/batchatco/go-thrower v0.0.0-20200827035905-5cb7337f6be6 h1:gDf4IUqKDnH7F0XdgeYOBx2jlMKF/j9Xm42sISXpwqY=
+github.com/batchatco/go-thrower v0.0.0-20200827035905-5cb7337f6be6/go.mod h1:hJ9Ll7FOzcIr57sd7RHga7StcCVAL0vFBUsNpnGntNg=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
-github.com/nilsmagnus/grib v1.2.8 h1:H7ch/1/agaCqM3MC8hW1Ft+EJ+q2XB757uml/IfPvp4=
-github.com/nilsmagnus/grib v1.2.8/go.mod h1:XHm+5zuoOk0NSIWaGmA3JaAxI4i50YvD1L1vz+aqPOQ=

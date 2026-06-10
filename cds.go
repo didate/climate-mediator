@@ -52,7 +52,7 @@ func (c *CDSClient) FetchMonthlyData(dataset, variable, productType string, year
 			"year":         []string{fmt.Sprintf("%d", year)},
 			"month":        []string{fmt.Sprintf("%02d", month)},
 			"time":         []string{"00:00"},
-			"data_format":  "grib",
+			"data_format":  "netcdf",
 			"area":         []float64{13, -15, 7, -7}, // [N, W, S, E]
 		},
 	}
