@@ -135,6 +135,42 @@ func toFloat64Slice(vals interface{}) ([]float64, error) {
 			out[i] = float64(val)
 		}
 		return out, nil
+	// 2D arrays [lat][lon]
+	case [][]float32:
+		var out []float64
+		for _, row := range v {
+			for _, val := range row {
+				out = append(out, float64(val))
+			}
+		}
+		return out, nil
+	case [][]float64:
+		var out []float64
+		for _, row := range v {
+			out = append(out, row...)
+		}
+		return out, nil
+	// 3D arrays [time][lat][lon] — take first time step
+	case [][][]float32:
+		if len(v) == 0 {
+			return nil, fmt.Errorf("empty 3D array")
+		}
+		var out []float64
+		for _, row := range v[0] {
+			for _, val := range row {
+				out = append(out, float64(val))
+			}
+		}
+		return out, nil
+	case [][][]float64:
+		if len(v) == 0 {
+			return nil, fmt.Errorf("empty 3D array")
+		}
+		var out []float64
+		for _, row := range v[0] {
+			out = append(out, row...)
+		}
+		return out, nil
 	default:
 		return nil, fmt.Errorf("unsupported data type: %T", vals)
 	}
