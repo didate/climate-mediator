@@ -1,0 +1,28 @@
+{
+  "mappings": [
+    {
+      "cdsVariable": "2m_temperature",
+      "cdsDataset": "reanalysis-era5-single-levels-monthly-means",
+      "cdsProductType": "monthly_averaged_reanalysis",
+      "dhis2DataElement": "REPLACE_WITH_DE_ID",
+      "dhis2CategoryOptionCombo": "REPLACE_WITH_COC_ID",
+      "transform": "kelvin_to_celsius"
+    },
+    {
+      "cdsVariable": "total_precipitation",
+      "cdsDataset": "reanalysis-era5-single-levels-monthly-means",
+      "cdsProductType": "monthly_averaged_reanalysis",
+      "dhis2DataElement": "REPLACE_WITH_DE_ID",
+      "dhis2CategoryOptionCombo": "REPLACE_WITH_COC_ID",
+      "transform": "m_to_mm"
+    },
+    {
+      "cdsVariable": "2m_dewpoint_temperature",
+      "cdsDataset": "reanalysis-era5-single-levels-monthly-means",
+      "cdsProductType": "monthly_averaged_reanalysis",
+      "dhis2DataElement": "REPLACE_WITH_DE_ID",
+      "dhis2CategoryOptionCombo": "REPLACE_WITH_COC_ID",
+      "transform": "kelvin_to_celsius"
+    }
+  ]
+}
