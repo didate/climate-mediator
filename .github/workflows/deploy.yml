@@ -54,6 +54,6 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /opt/interop
+            cd /opt/climate
             docker compose pull climate-mediator
             docker compose up -d climate-mediator
