@@ -236,7 +236,7 @@ func (c *CDSClient) downloadFile(downloadURL, variable string, year, month int) 
 	return parseNetCDF(gribPath, variable, year, month)
 }
 
-// extractGribFromZip extracts the first GRIB file from a ZIP archive.
+// extractGribFromZip extracts the first data file from a ZIP archive.
 func extractGribFromZip(zipPath string) (string, error) {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -245,32 +245,36 @@ func extractGribFromZip(zipPath string) (string, error) {
 	defer r.Close()
 
 	for _, f := range r.File {
-		ext := strings.ToLower(filepath.Ext(f.Name))
-		if ext == ".grib" || ext == ".grib2" || ext == ".grb" || ext == ".grb2" || ext == "" {
-			rc, err := f.Open()
-			if err != nil {
-				return "", fmt.Errorf("open zip entry: %w", err)
-			}
-			defer rc.Close()
-
-			tmpFile, err := os.CreateTemp("", "cds-*.grib")
-			if err != nil {
-				return "", fmt.Errorf("create temp file: %w", err)
-			}
-
-			if _, err := io.Copy(tmpFile, rc); err != nil {
-				tmpFile.Close()
-				os.Remove(tmpFile.Name())
-				return "", fmt.Errorf("extract grib: %w", err)
-			}
-			tmpFile.Close()
-
-			log.Printf("Extracted GRIB file: %s from ZIP", f.Name)
-			return tmpFile.Name(), nil
+		if f.FileInfo().IsDir() {
+			continue
 		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return "", fmt.Errorf("open zip entry: %w", err)
+		}
+
+		ext := strings.ToLower(filepath.Ext(f.Name))
+		tmpFile, err := os.CreateTemp("", "cds-*"+ext)
+		if err != nil {
+			rc.Close()
+			return "", fmt.Errorf("create temp file: %w", err)
+		}
+
+		if _, err := io.Copy(tmpFile, rc); err != nil {
+			tmpFile.Close()
+			rc.Close()
+			os.Remove(tmpFile.Name())
+			return "", fmt.Errorf("extract file: %w", err)
+			}
+		tmpFile.Close()
+		rc.Close()
+
+		log.Printf("Extracted file: %s from ZIP", f.Name)
+		return tmpFile.Name(), nil
 	}
 
-	return "", fmt.Errorf("no GRIB file found in ZIP")
+	return "", fmt.Errorf("no data file found in ZIP")
 }
 
 // ExtractValueForCoordinate finds the nearest grid point value for a given lat/lon.
