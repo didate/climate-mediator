@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc *OpenHIMClient, mapping *MappingConfig) {
+func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc *OpenHIMClient, mapping *MappingConfigFull) {
 	log.Printf("Received %s %s", r.Method, r.URL.String())
 	transactionID := r.Header.Get("X-OpenHIM-TransactionID")
 

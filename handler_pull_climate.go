@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc *OpenHIMClient, mapping *MappingConfig) {
+func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc *OpenHIMClient, mapping *MappingConfigFull) {
 	log.Printf("Received %s %s", r.Method, r.URL.String())
 	transactionID := r.Header.Get("X-OpenHIM-TransactionID")
 
@@ -91,6 +91,9 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		totalFailed := 0
 
 		for _, p := range periods {
+			// Store grids for computed variables (e.g., relative humidity)
+			grids := make(map[string]*CDSGridData)
+
 			for _, m := range mapping.Mappings {
 				startCDS := time.Now()
 				grid, err := cds.FetchMonthlyData(m.CDSDataset, m.CDSVariable, m.CDSProductType, p.Year, p.Month)
@@ -131,6 +134,7 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 				})
 
 				log.Printf("Downloaded CDS grid for %s %s: %dx%d", m.CDSVariable, p, len(grid.Lats), len(grid.Lons))
+				grids[m.CDSVariable] = grid
 
 				// Extract values for each org unit and save as Observations
 				startSave := time.Now()
@@ -202,6 +206,69 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 				})
 
 				log.Printf("Variable %s %s: saved %d, failed %d in %v", m.CDSVariable, p, saved, failed, endSave.Sub(startSave))
+			}
+
+			// Compute derived variables (e.g., relative humidity)
+			for _, c := range mapping.Computed {
+				if c.Compute == "relative_humidity" {
+					tempGrid := grids["2m_temperature"]
+					dewGrid := grids["2m_dewpoint_temperature"]
+					if tempGrid == nil || dewGrid == nil {
+						log.Printf("Cannot compute %s: missing temperature or dewpoint grid", c.Name)
+						continue
+					}
+
+					startSave := time.Now()
+					saved := 0
+					failed := 0
+					computedMapping := VariableMapping{
+						CDSVariable:           c.Name,
+						DHIS2DataElement:      c.DHIS2DataElement,
+						DHIS2CategoryOptCombo: c.DHIS2CategoryOptCombo,
+					}
+
+					for _, ou := range orgUnits {
+						lat := ou.Geometry.Coordinates[1]
+						lon := ou.Geometry.Coordinates[0]
+
+						tempVal, ok1 := tempGrid.ExtractValueForCoordinate(lat, lon)
+						dewVal, ok2 := dewGrid.ExtractValueForCoordinate(lat, lon)
+						if !ok1 || !ok2 {
+							failed++
+							continue
+						}
+
+						rh := ComputeRelativeHumidity(tempVal, dewVal)
+						obs := ClimateValueToObservation(ou.ID, c.Name, rh, "%", p.Year, p.Month, &computedMapping)
+
+						if err := hapi.PutObservation(obs); err != nil {
+							log.Printf("Save RH Observation failed [%s]: %v", ou.ID, err)
+							failed++
+						} else {
+							saved++
+						}
+					}
+					endSave := time.Now()
+					totalSaved += saved
+					totalFailed += failed
+
+					orchestrations = append(orchestrations, Orchestration{
+						Name: fmt.Sprintf("compute-%s-%s", c.Name, p),
+						Request: OHRequest{
+							Path:      "internal://compute-relative-humidity",
+							Method:    "COMPUTE",
+							Timestamp: startSave,
+						},
+						Response: OHResponse{
+							Status:    200,
+							Headers:   map[string]string{"Content-Type": "application/json"},
+							Body:      fmt.Sprintf(`{"saved":%d,"failed":%d}`, saved, failed),
+							Timestamp: endSave,
+						},
+					})
+
+					log.Printf("Computed %s %s: saved %d, failed %d in %v", c.Name, p, saved, failed, endSave.Sub(startSave))
+				}
 			}
 		}
 

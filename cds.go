@@ -214,3 +214,19 @@ func TransformValue(value float64, transform string) (float64, string) {
 		return value, ""
 	}
 }
+
+// ComputeRelativeHumidity calculates RH from temperature and dewpoint (both in Kelvin).
+// Uses the Magnus formula: RH = 100 * exp((17.625 * Td) / (243.04 + Td)) / exp((17.625 * T) / (243.04 + T))
+// where T and Td are in Celsius.
+func ComputeRelativeHumidity(tempK, dewpointK float64) float64 {
+	t := tempK - 273.15
+	td := dewpointK - 273.15
+	rh := 100 * math.Exp((17.625*td)/(243.04+td)) / math.Exp((17.625*t)/(243.04+t))
+	if rh > 100 {
+		rh = 100
+	}
+	if rh < 0 {
+		rh = 0
+	}
+	return rh
+}

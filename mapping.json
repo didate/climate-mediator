@@ -2,27 +2,57 @@
   "mappings": [
     {
       "cdsVariable": "2m_temperature",
-      "cdsDataset": "reanalysis-era5-single-levels-monthly-means",
+      "cdsDataset": "reanalysis-era5-land-monthly-means",
       "cdsProductType": "monthly_averaged_reanalysis",
-      "dhis2DataElement": "REPLACE_WITH_DE_ID",
-      "dhis2CategoryOptionCombo": "REPLACE_WITH_COC_ID",
-      "transform": "kelvin_to_celsius"
+      "dhis2DataElement": "JQkP6zG5viG",
+      "dhis2CategoryOptionCombo": "",
+      "transform": "kelvin_to_celsius",
+      "description": "Température moyenne de l'air (ERA5-Land)"
     },
     {
-      "cdsVariable": "total_precipitation",
-      "cdsDataset": "reanalysis-era5-single-levels-monthly-means",
+      "cdsVariable": "minimum_2m_temperature_since_previous_post_processing",
+      "cdsDataset": "reanalysis-era5-land-monthly-means",
       "cdsProductType": "monthly_averaged_reanalysis",
-      "dhis2DataElement": "REPLACE_WITH_DE_ID",
-      "dhis2CategoryOptionCombo": "REPLACE_WITH_COC_ID",
-      "transform": "m_to_mm"
+      "dhis2DataElement": "ZM2ctaAJrQZ",
+      "dhis2CategoryOptionCombo": "",
+      "transform": "kelvin_to_celsius",
+      "description": "Température minimale de l'air (ERA5-Land)"
+    },
+    {
+      "cdsVariable": "maximum_2m_temperature_since_previous_post_processing",
+      "cdsDataset": "reanalysis-era5-land-monthly-means",
+      "cdsProductType": "monthly_averaged_reanalysis",
+      "dhis2DataElement": "MRBJW8Vhip7",
+      "dhis2CategoryOptionCombo": "",
+      "transform": "kelvin_to_celsius",
+      "description": "Température maximale de l'air (ERA5-Land)"
     },
     {
       "cdsVariable": "2m_dewpoint_temperature",
-      "cdsDataset": "reanalysis-era5-single-levels-monthly-means",
+      "cdsDataset": "reanalysis-era5-land-monthly-means",
       "cdsProductType": "monthly_averaged_reanalysis",
-      "dhis2DataElement": "REPLACE_WITH_DE_ID",
-      "dhis2CategoryOptionCombo": "REPLACE_WITH_COC_ID",
-      "transform": "kelvin_to_celsius"
+      "dhis2DataElement": "QOpC4QmjoBc",
+      "dhis2CategoryOptionCombo": "",
+      "transform": "kelvin_to_celsius",
+      "description": "Température du point de rosée (ERA5-Land)"
+    },
+    {
+      "cdsVariable": "total_precipitation",
+      "cdsDataset": "reanalysis-era5-land-monthly-means",
+      "cdsProductType": "monthly_averaged_reanalysis",
+      "dhis2DataElement": "ag0JMnTyqOL",
+      "dhis2CategoryOptionCombo": "",
+      "transform": "m_to_mm",
+      "description": "Précipitations (ERA5-Land)"
+    }
+  ],
+  "computed": [
+    {
+      "name": "relative_humidity",
+      "dhis2DataElement": "hrgWO00MIMe",
+      "dhis2CategoryOptionCombo": "",
+      "compute": "relative_humidity",
+      "description": "Humidité relative calculée à partir de T et Td (ERA5-Land)"
     }
   ]
 }
