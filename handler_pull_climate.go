@@ -152,8 +152,13 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 					go func() {
 						defer wg.Done()
 						for ou := range jobs {
-							lat := ou.Geometry.Coordinates[1]
-							lon := ou.Geometry.Coordinates[0]
+							lon, lat, ok := ou.Geometry.PointCoordinates()
+							if !ok {
+								mu.Lock()
+								failed++
+								mu.Unlock()
+								continue
+							}
 
 							rawValue, ok := grid.ExtractValueForCoordinate(lat, lon)
 							if !ok {
@@ -228,8 +233,11 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 					}
 
 					for _, ou := range orgUnits {
-						lat := ou.Geometry.Coordinates[1]
-						lon := ou.Geometry.Coordinates[0]
+						lon, lat, ok := ou.Geometry.PointCoordinates()
+						if !ok {
+							failed++
+							continue
+						}
 
 						tempVal, ok1 := tempGrid.ExtractValueForCoordinate(lat, lon)
 						dewVal, ok2 := dewGrid.ExtractValueForCoordinate(lat, lon)

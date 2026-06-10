@@ -23,8 +23,20 @@ type OrgUnit struct {
 }
 
 type Geometry struct {
-	Type        string    `json:"type"`
-	Coordinates []float64 `json:"coordinates"` // [lon, lat] for Point
+	Type        string          `json:"type"`
+	Coordinates json.RawMessage `json:"coordinates"`
+}
+
+// PointCoordinates extracts [lon, lat] from a Point geometry.
+func (g *Geometry) PointCoordinates() (lon, lat float64, ok bool) {
+	if g.Type != "Point" {
+		return 0, 0, false
+	}
+	var coords []float64
+	if err := json.Unmarshal(g.Coordinates, &coords); err != nil || len(coords) < 2 {
+		return 0, 0, false
+	}
+	return coords[0], coords[1], true
 }
 
 type DataValueSet struct {
@@ -98,8 +110,10 @@ func (c *DHIS2Client) FetchOrgUnitsWithCoordinates() ([]OrgUnit, error) {
 	// Filter to only Point geometries with valid coordinates
 	var filtered []OrgUnit
 	for _, ou := range result.OrganisationUnits {
-		if ou.Geometry != nil && ou.Geometry.Type == "Point" && len(ou.Geometry.Coordinates) >= 2 {
-			filtered = append(filtered, ou)
+		if ou.Geometry != nil {
+			if _, _, ok := ou.Geometry.PointCoordinates(); ok {
+				filtered = append(filtered, ou)
+			}
 		}
 	}
 

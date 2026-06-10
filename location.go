@@ -1,5 +1,7 @@
 package main
 
+import "encoding/json"
+
 // FHIRLocation represents a FHIR R4 Location with position (lat/lon).
 type FHIRLocation struct {
 	ResourceType string       `json:"resourceType"`
@@ -32,10 +34,12 @@ func OrgUnitToLocation(ou OrgUnit, dhis2BaseURL string) *FHIRLocation {
 		}},
 	}
 
-	if ou.Geometry != nil && ou.Geometry.Type == "Point" && len(ou.Geometry.Coordinates) >= 2 {
-		loc.Position = &Position{
-			Longitude: ou.Geometry.Coordinates[0],
-			Latitude:  ou.Geometry.Coordinates[1],
+	if ou.Geometry != nil {
+		if lon, lat, ok := ou.Geometry.PointCoordinates(); ok {
+			loc.Position = &Position{
+				Longitude: lon,
+				Latitude:  lat,
+			}
 		}
 	}
 
@@ -52,9 +56,10 @@ func LocationToOrgUnit(loc *FHIRLocation) OrgUnit {
 		Name: loc.Name,
 	}
 	if loc.Position != nil {
+		coords, _ := json.Marshal([]float64{loc.Position.Longitude, loc.Position.Latitude})
 		ou.Geometry = &Geometry{
 			Type:        "Point",
-			Coordinates: []float64{loc.Position.Longitude, loc.Position.Latitude},
+			Coordinates: coords,
 		}
 	}
 	return ou
