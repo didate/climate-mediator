@@ -10,24 +10,6 @@
       "description": "Température moyenne de l'air (ERA5-Land)"
     },
     {
-      "cdsVariable": "minimum_2m_temperature_since_previous_post_processing",
-      "cdsDataset": "reanalysis-era5-land-monthly-means",
-      "cdsProductType": "monthly_averaged_reanalysis",
-      "dhis2DataElement": "ZM2ctaAJrQZ",
-      "dhis2CategoryOptionCombo": "",
-      "transform": "kelvin_to_celsius",
-      "description": "Température minimale de l'air (ERA5-Land)"
-    },
-    {
-      "cdsVariable": "maximum_2m_temperature_since_previous_post_processing",
-      "cdsDataset": "reanalysis-era5-land-monthly-means",
-      "cdsProductType": "monthly_averaged_reanalysis",
-      "dhis2DataElement": "MRBJW8Vhip7",
-      "dhis2CategoryOptionCombo": "",
-      "transform": "kelvin_to_celsius",
-      "description": "Température maximale de l'air (ERA5-Land)"
-    },
-    {
       "cdsVariable": "2m_dewpoint_temperature",
       "cdsDataset": "reanalysis-era5-land-monthly-means",
       "cdsProductType": "monthly_averaged_reanalysis",

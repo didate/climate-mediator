@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"archive/zip"
 	"io"
 	"log"
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -209,8 +212,8 @@ func (c *CDSClient) downloadFile(downloadURL, variable string, year, month int) 
 	}
 	defer resp.Body.Close()
 
-	// Save to temp file for processing
-	tmpFile, err := os.CreateTemp("", "cds-*.grib")
+	// Save to temp file
+	tmpFile, err := os.CreateTemp("", "cds-download-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}
@@ -222,7 +225,52 @@ func (c *CDSClient) downloadFile(downloadURL, variable string, year, month int) 
 	}
 	tmpFile.Close()
 
-	return parseNetCDF(tmpFile.Name(), variable, year, month)
+	// Check if it's a ZIP file and extract the GRIB
+	gribPath, err := extractGribFromZip(tmpFile.Name())
+	if err != nil {
+		// Not a ZIP, try as raw GRIB
+		return parseNetCDF(tmpFile.Name(), variable, year, month)
+	}
+	defer os.Remove(gribPath)
+
+	return parseNetCDF(gribPath, variable, year, month)
+}
+
+// extractGribFromZip extracts the first GRIB file from a ZIP archive.
+func extractGribFromZip(zipPath string) (string, error) {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		ext := strings.ToLower(filepath.Ext(f.Name))
+		if ext == ".grib" || ext == ".grib2" || ext == ".grb" || ext == ".grb2" || ext == "" {
+			rc, err := f.Open()
+			if err != nil {
+				return "", fmt.Errorf("open zip entry: %w", err)
+			}
+			defer rc.Close()
+
+			tmpFile, err := os.CreateTemp("", "cds-*.grib")
+			if err != nil {
+				return "", fmt.Errorf("create temp file: %w", err)
+			}
+
+			if _, err := io.Copy(tmpFile, rc); err != nil {
+				tmpFile.Close()
+				os.Remove(tmpFile.Name())
+				return "", fmt.Errorf("extract grib: %w", err)
+			}
+			tmpFile.Close()
+
+			log.Printf("Extracted GRIB file: %s from ZIP", f.Name)
+			return tmpFile.Name(), nil
+		}
+	}
+
+	return "", fmt.Errorf("no GRIB file found in ZIP")
 }
 
 // ExtractValueForCoordinate finds the nearest grid point value for a given lat/lon.
