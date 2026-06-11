@@ -97,12 +97,12 @@ func (c *HAPIClient) PutObservation(obs *FHIRObservation) error {
 		return fmt.Errorf("put observation failed: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("put observation returned %d: %s", resp.StatusCode, string(respBody))
 	}
+	io.Copy(io.Discard, resp.Body)
 	return nil
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 )
 
 // FHIRObservation represents a climate measurement at a location and time.
@@ -57,7 +58,9 @@ const (
 // ClimateValueToObservation creates a FHIR Observation for a climate value.
 func ClimateValueToObservation(orgUnitID, cdsVariable string, value float64, unit string, year, month int, mapping *VariableMapping) *FHIRObservation {
 	period := fmt.Sprintf("%d%02d", year, month)
-	id := fmt.Sprintf("%s-%s-%s", orgUnitID, cdsVariable, period)
+	// FHIR resource IDs: alphanumeric + hyphens only, max 64 chars
+	safeVar := strings.ReplaceAll(cdsVariable, "_", "-")
+	id := fmt.Sprintf("%s-%s-%s", orgUnitID, safeVar, period)
 
 	start := fmt.Sprintf("%d-%02d-01", year, month)
 	// End of month
