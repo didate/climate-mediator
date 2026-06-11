@@ -278,6 +278,8 @@ func extractGribFromZip(zipPath string) (string, error) {
 }
 
 // ExtractValueForCoordinate finds the nearest grid point value for a given lat/lon.
+// If the nearest point is NaN (ocean in ERA5-Land), it searches nearby cells
+// within a radius of up to 3 grid points.
 func (grid *CDSGridData) ExtractValueForCoordinate(lat, lon float64) (float64, bool) {
 	if len(grid.Lats) == 0 || len(grid.Lons) == 0 {
 		return 0, false
@@ -291,11 +293,40 @@ func (grid *CDSGridData) ExtractValueForCoordinate(lat, lon float64) (float64, b
 	}
 
 	val := grid.Values[latIdx][lonIdx]
-	if math.IsNaN(val) {
-		return 0, false
+	if !math.IsNaN(val) {
+		return val, true
 	}
 
-	return val, true
+	// Search nearby cells (expanding radius up to 3 grid points)
+	nLat := len(grid.Lats)
+	nLon := len(grid.Lons)
+	for radius := 1; radius <= 3; radius++ {
+		bestDist := math.MaxFloat64
+		bestVal := math.NaN()
+		for di := -radius; di <= radius; di++ {
+			for dj := -radius; dj <= radius; dj++ {
+				ni := latIdx + di
+				nj := lonIdx + dj
+				if ni < 0 || ni >= nLat || nj < 0 || nj >= nLon {
+					continue
+				}
+				v := grid.Values[ni][nj]
+				if math.IsNaN(v) {
+					continue
+				}
+				dist := math.Sqrt(float64(di*di + dj*dj))
+				if dist < bestDist {
+					bestDist = dist
+					bestVal = v
+				}
+			}
+		}
+		if !math.IsNaN(bestVal) {
+			return bestVal, true
+		}
+	}
+
+	return 0, false
 }
 
 func nearestIndex(arr []float64, target float64) int {
