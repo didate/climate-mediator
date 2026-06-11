@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -166,17 +167,27 @@ func (c *DHIS2Client) PostDataValueSet(dvs *DataValueSet) ([]byte, string, error
 		return nil, endpoint, fmt.Errorf("marshal dataValueSet: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, endpoint, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "ApiToken "+c.PAT)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	// Retry up to 3 times on connection errors (EOF, timeout)
+	var resp *http.Response
+	for attempt := 0; attempt < 3; attempt++ {
+		req, err := http.NewRequest("POST", endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, endpoint, fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Authorization", "ApiToken "+c.PAT)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, endpoint, fmt.Errorf("dhis2 call failed: %w", err)
+		resp, err = c.http.Do(req)
+		if err == nil {
+			break
+		}
+		if attempt < 2 {
+			log.Printf("DHIS2 POST retry %d/3: %v", attempt+1, err)
+			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+			continue
+		}
+		return nil, endpoint, fmt.Errorf("dhis2 call failed after 3 attempts: %w", err)
 	}
 	defer resp.Body.Close()
 
