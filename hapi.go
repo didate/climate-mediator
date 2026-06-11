@@ -107,9 +107,9 @@ func (c *HAPIClient) PutObservation(obs *FHIRObservation) error {
 }
 
 func (c *HAPIClient) GetObservations(code, date string) ([]FHIRObservation, error) {
-	// Search by system|code and date range
-	url := fmt.Sprintf("%s/Observation?code=%s|%s&date=ge%s-01&date=le%s-31&_count=200",
-		c.BaseURL, cdsSystem, code, date, date)
+	// Search by system|code and date range (use start of next month as upper bound)
+	url := fmt.Sprintf("%s/Observation?code=%s|%s&date=ge%s-01&date=lt%s&_count=200",
+		c.BaseURL, cdsSystem, code, date, nextMonth(date))
 	var observations []FHIRObservation
 
 	for url != "" {
@@ -157,6 +157,16 @@ func (c *HAPIClient) fetchBundle(url string) (*FHIRBundle, error) {
 	}
 
 	return &bundle, nil
+}
+
+// nextMonth returns the first day of the next month given "YYYY-MM".
+func nextMonth(yearMonth string) string {
+	t, err := time.Parse("2006-01", yearMonth)
+	if err != nil {
+		return yearMonth + "-28"
+	}
+	next := t.AddDate(0, 1, 0)
+	return next.Format("2006-01-02")
 }
 
 func nextLink(b *FHIRBundle) string {
