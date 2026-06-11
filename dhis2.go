@@ -91,6 +91,7 @@ type DataValue struct {
 	OrgUnit              string `json:"orgUnit,omitempty"`
 	CategoryOptionCombo  string `json:"categoryOptionCombo,omitempty"`
 	Value                string `json:"value"`
+	Comment              string `json:"comment,omitempty"`
 }
 
 type ImportCount struct {

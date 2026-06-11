@@ -126,6 +126,13 @@ func ObservationToDataValue(obs *FHIRObservation) *DataValue {
 		dv.Value = fmt.Sprintf("%.2f", obs.ValueQuantity.Value)
 	}
 
+	// Add import comment with source info
+	varName := ""
+	if obs.Code != nil && len(obs.Code.Coding) > 0 {
+		varName = obs.Code.Coding[0].Code
+	}
+	dv.Comment = fmt.Sprintf("ERA5-Land %s - Climate Mediator", varName)
+
 	return dv
 }
 
