@@ -107,7 +107,9 @@ func (c *HAPIClient) PutObservation(obs *FHIRObservation) error {
 }
 
 func (c *HAPIClient) GetObservations(code, date string) ([]FHIRObservation, error) {
-	url := fmt.Sprintf("%s/Observation?code=%s&date=%s&_count=200", c.BaseURL, code, date)
+	// Search by system|code and date range
+	url := fmt.Sprintf("%s/Observation?code=%s|%s&date=ge%s-01&date=le%s-31&_count=200",
+		c.BaseURL, cdsSystem, code, date, date)
 	var observations []FHIRObservation
 
 	for url != "" {
