@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"encoding/json"
@@ -8,26 +8,33 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/didate/climate-mediator/internal/config"
+	"github.com/didate/climate-mediator/internal/dhis2"
+	"github.com/didate/climate-mediator/internal/fhir"
+	"github.com/didate/climate-mediator/internal/mapping"
+	"github.com/didate/climate-mediator/internal/openhim"
+	"github.com/didate/climate-mediator/internal/period"
 )
 
-func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc *OpenHIMClient, mapping *MappingConfigFull) {
+func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Config, ohc *openhim.OpenHIMClient, mp *mapping.MappingConfigFull) {
 	log.Printf("Received %s %s", r.Method, r.URL.String())
 	transactionID := r.Header.Get("X-OpenHIM-TransactionID")
 
-	var periods []YearMonth
+	var periods []period.YearMonth
 	if y := r.URL.Query().Get("year"); y != "" {
 		m := r.URL.Query().Get("month")
 		if m == "" {
-			respondError(w, cfg.MediatorURN, http.StatusBadRequest, "Missing month param when year is specified")
+			openhim.RespondError(w, cfg.MediatorURN, http.StatusBadRequest, "Missing month param when year is specified")
 			return
 		}
 		year, _ := strconv.Atoi(y)
 		month, _ := strconv.Atoi(m)
 		if year < 1950 || month < 1 || month > 12 {
-			respondError(w, cfg.MediatorURN, http.StatusBadRequest, "Invalid year or month")
+			openhim.RespondError(w, cfg.MediatorURN, http.StatusBadRequest, "Invalid year or month")
 			return
 		}
-		periods = []YearMonth{{Year: year, Month: month}}
+		periods = []period.YearMonth{{Year: year, Month: month}}
 	} else {
 		months := 3
 		if v := r.URL.Query().Get("months"); v != "" {
@@ -35,28 +42,28 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 				months = n
 			}
 		}
-		periods = GenerateMonthPeriods(months)
+		periods = period.GenerateMonthPeriods(months)
 	}
 
-	respondAccepted(w, cfg.MediatorURN, fmt.Sprintf("Push climate data for %d period(s) to DHIS2 started", len(periods)))
+	openhim.RespondAccepted(w, cfg.MediatorURN, fmt.Sprintf("Push climate data for %d period(s) to DHIS2 started", len(periods)))
 
 	go func() {
 		startTotal := time.Now()
-		target := NewDHIS2Client(cfg.DHIS2TargetURL, cfg.DHIS2TargetPAT)
-		hapi := NewHAPIClient(cfg.HAPIFhirURL)
-		var orchestrations []Orchestration
+		target := dhis2.NewDHIS2Client(cfg.DHIS2TargetURL, cfg.DHIS2TargetPAT)
+		hapi := fhir.NewHAPIClient(cfg.HAPIFhirURL)
+		var orchestrations []openhim.Orchestration
 
 		// Collect all variable codes to search (mappings + computed)
 		var varCodes []string
-		for _, m := range mapping.Mappings {
+		for _, m := range mp.Mappings {
 			varCodes = append(varCodes, m.CDSVariable)
 		}
-		for _, c := range mapping.Computed {
+		for _, c := range mp.Computed {
 			varCodes = append(varCodes, c.Name)
 		}
 
-		// Fetch observations for each period × variable from HAPI
-		var allObservations []FHIRObservation
+		// Fetch observations for each period x variable from HAPI
+		var allObservations []fhir.FHIRObservation
 
 		for _, p := range periods {
 			date := p.String()
@@ -72,14 +79,14 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 
 				allObservations = append(allObservations, obs...)
 
-				orchestrations = append(orchestrations, Orchestration{
+				orchestrations = append(orchestrations, openhim.Orchestration{
 					Name: fmt.Sprintf("fetch-observations-%s-%s", varCode, p),
-					Request: OHRequest{
+					Request: openhim.OHRequest{
 						Path:      fmt.Sprintf("%s/Observation?code=%s&date=%s", cfg.HAPIFhirURL, varCode, date),
 						Method:    "GET",
 						Timestamp: startFetch,
 					},
-					Response: OHResponse{
+					Response: openhim.OHResponse{
 						Status:    200,
 						Headers:   map[string]string{"Content-Type": "application/json"},
 						Body:      fmt.Sprintf(`{"count":%d}`, len(obs)),
@@ -106,9 +113,9 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		}
 
 		// Group data values by org unit for efficient posting
-		orgUnitValues := make(map[string][]DataValue)
+		orgUnitValues := make(map[string][]dhis2.DataValue)
 		for _, obs := range allObservations {
-			dv := ObservationToDataValue(&obs)
+			dv := fhir.ObservationToDataValue(&obs)
 			if dv.OrgUnit != "" && dv.DataElement != "" && dv.Value != "" {
 				orgUnitValues[dv.OrgUnit] = append(orgUnitValues[dv.OrgUnit], *dv)
 			}
@@ -124,7 +131,7 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 
 		type pushJob struct {
 			OrgUnit    string
-			DataValues []DataValue
+			DataValues []dhis2.DataValue
 		}
 
 		jobs := make(chan pushJob, len(orgUnitValues))
@@ -136,7 +143,7 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 			go func() {
 				defer wg.Done()
 				for job := range jobs {
-					dvs := &DataValueSet{
+					dvs := &dhis2.DataValueSet{
 						OrgUnit:    job.OrgUnit,
 						DataValues: job.DataValues,
 					}
@@ -150,7 +157,7 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 						continue
 					}
 
-					ic := parseImportCount(respBody)
+					ic := dhis2.ParseImportCount(respBody)
 					mu.Lock()
 					pushSuccess++
 					totalImported += ic.Imported
@@ -168,14 +175,14 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		wg.Wait()
 		endPush := time.Now()
 
-		orchestrations = append(orchestrations, Orchestration{
+		orchestrations = append(orchestrations, openhim.Orchestration{
 			Name: "push-to-dhis2",
-			Request: OHRequest{
+			Request: openhim.OHRequest{
 				Path:      cfg.DHIS2TargetURL + "/api/dataValueSets",
 				Method:    "BATCH-POST",
 				Timestamp: startPush,
 			},
-			Response: OHResponse{
+			Response: openhim.OHResponse{
 				Status:  200,
 				Headers: map[string]string{"Content-Type": "application/json"},
 				Body: fmt.Sprintf(`{"success":%d,"failed":%d,"imported":%d,"updated":%d,"ignored":%d}`,
@@ -195,7 +202,7 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		}
 
 		summary, _ := json.MarshalIndent(map[string]interface{}{
-			"periods":       len(periods),
+			"periods":      len(periods),
 			"observations": len(allObservations),
 			"orgUnits":     len(orgUnitValues),
 			"pushSuccess":  pushSuccess,

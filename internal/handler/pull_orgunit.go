@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"encoding/json"
@@ -8,41 +8,46 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/didate/climate-mediator/internal/config"
+	"github.com/didate/climate-mediator/internal/dhis2"
+	"github.com/didate/climate-mediator/internal/fhir"
+	"github.com/didate/climate-mediator/internal/openhim"
 )
 
-func handlePullOrgUnit(w http.ResponseWriter, r *http.Request, cfg *Config, ohc *OpenHIMClient) {
+func HandlePullOrgUnit(w http.ResponseWriter, r *http.Request, cfg *config.Config, ohc *openhim.OpenHIMClient) {
 	log.Printf("Received %s %s", r.Method, r.URL.String())
 	transactionID := r.Header.Get("X-OpenHIM-TransactionID")
 
-	respondAccepted(w, cfg.MediatorURN, "Pull org units with coordinates started")
+	openhim.RespondAccepted(w, cfg.MediatorURN, "Pull org units with coordinates started")
 
 	go func() {
 		startTotal := time.Now()
-		dhis2 := NewDHIS2Client(cfg.DHIS2TargetURL, cfg.DHIS2TargetPAT)
-		hapi := NewHAPIClient(cfg.HAPIFhirURL)
-		var orchestrations []Orchestration
+		d := dhis2.NewDHIS2Client(cfg.DHIS2TargetURL, cfg.DHIS2TargetPAT)
+		hapi := fhir.NewHAPIClient(cfg.HAPIFhirURL)
+		var orchestrations []openhim.Orchestration
 
 		// Fetch org units with coordinates from DHIS2
 		startFetch := time.Now()
-		orgUnits, err := dhis2.FetchOrgUnitsWithCoordinates()
+		orgUnits, err := d.FetchOrgUnitsWithCoordinates()
 		endFetch := time.Now()
 
 		if err != nil {
 			log.Printf("Fetch org units error: %v", err)
-			ohc.updateTransactionFailed(transactionID, cfg.MediatorURN,
+			ohc.UpdateTransactionFailed(transactionID, cfg.MediatorURN,
 				fmt.Sprintf("Failed to fetch org units: %v", err))
 			return
 		}
 
-		orchestrations = append(orchestrations, Orchestration{
+		orchestrations = append(orchestrations, openhim.Orchestration{
 			Name: "fetch-orgUnits-with-coordinates",
-			Request: OHRequest{
+			Request: openhim.OHRequest{
 				Path:      cfg.DHIS2TargetURL + "/api/organisationUnits?filter=geometry:!null",
 				Method:    "GET",
 				Headers:   map[string]string{"Authorization": "ApiToken ***"},
 				Timestamp: startFetch,
 			},
-			Response: OHResponse{
+			Response: openhim.OHResponse{
 				Status:    200,
 				Headers:   map[string]string{"Content-Type": "application/json"},
 				Body:      fmt.Sprintf(`{"count":%d}`, len(orgUnits)),
@@ -57,7 +62,7 @@ func handlePullOrgUnit(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		success := 0
 		failed := 0
 
-		jobs := make(chan OrgUnit, len(orgUnits))
+		jobs := make(chan dhis2.OrgUnit, len(orgUnits))
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 
@@ -66,7 +71,7 @@ func handlePullOrgUnit(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 			go func() {
 				defer wg.Done()
 				for ou := range jobs {
-					loc := OrgUnitToLocation(ou, cfg.OUIdentifierSystem)
+					loc := fhir.OrgUnitToLocation(ou, cfg.OUIdentifierSystem)
 					if err := hapi.PutLocation(loc); err != nil {
 						log.Printf("Save Location failed [%s]: %v", ou.ID, err)
 						mu.Lock()
@@ -88,14 +93,14 @@ func handlePullOrgUnit(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		wg.Wait()
 		endSave := time.Now()
 
-		orchestrations = append(orchestrations, Orchestration{
+		orchestrations = append(orchestrations, openhim.Orchestration{
 			Name: "save-locations-to-hapi-fhir",
-			Request: OHRequest{
+			Request: openhim.OHRequest{
 				Path:      cfg.HAPIFhirURL + "/Location",
 				Method:    "PUT",
 				Timestamp: startSave,
 			},
-			Response: OHResponse{
+			Response: openhim.OHResponse{
 				Status:    200,
 				Headers:   map[string]string{"Content-Type": "application/json"},
 				Body:      fmt.Sprintf(`{"success":%d,"failed":%d,"total":%d}`, success, failed, len(orgUnits)),
@@ -113,7 +118,7 @@ func handlePullOrgUnit(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		}
 
 		summary, _ := json.MarshalIndent(map[string]interface{}{
-			"orgUnitsFound":         len(orgUnits),
+			"orgUnitsFound":        len(orgUnits),
 			"savedWithCoordinates": success,
 			"failed":               failed,
 			"duration":             time.Since(startTotal).String(),

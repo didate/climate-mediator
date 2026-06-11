@@ -1,20 +1,23 @@
-package main
+package fhir
 
 import (
 	"fmt"
 	"strings"
+
+	"github.com/didate/climate-mediator/internal/dhis2"
+	"github.com/didate/climate-mediator/internal/mapping"
 )
 
 // FHIRObservation represents a climate measurement at a location and time.
 type FHIRObservation struct {
-	ResourceType string           `json:"resourceType"`
-	ID           string           `json:"id"`
-	Status       string           `json:"status"`
-	Code         *CodeableConcept `json:"code"`
-	Subject      *Reference       `json:"subject,omitempty"`
-	EffectivePeriod *FHIRPeriod   `json:"effectivePeriod,omitempty"`
-	ValueQuantity   *Quantity     `json:"valueQuantity,omitempty"`
-	Extension    []FHIRExtension  `json:"extension,omitempty"`
+	ResourceType    string           `json:"resourceType"`
+	ID              string           `json:"id"`
+	Status          string           `json:"status"`
+	Code            *CodeableConcept `json:"code"`
+	Subject         *Reference       `json:"subject,omitempty"`
+	EffectivePeriod *FHIRPeriod      `json:"effectivePeriod,omitempty"`
+	ValueQuantity   *Quantity        `json:"valueQuantity,omitempty"`
+	Extension       []FHIRExtension  `json:"extension,omitempty"`
 }
 
 type CodeableConcept struct {
@@ -49,14 +52,14 @@ type FHIRExtension struct {
 }
 
 const (
-	extDHIS2Period    = "https://dhis2.org/fhir/period"
-	extDHIS2DE        = "https://dhis2.org/fhir/dataElement"
-	extDHIS2COC       = "https://dhis2.org/fhir/categoryOptionCombo"
-	cdsSystem         = "https://cds.climate.copernicus.eu/variables"
+	ExtDHIS2Period = "https://dhis2.org/fhir/period"
+	ExtDHIS2DE     = "https://dhis2.org/fhir/dataElement"
+	ExtDHIS2COC    = "https://dhis2.org/fhir/categoryOptionCombo"
+	CdsSystem      = "https://cds.climate.copernicus.eu/variables"
 )
 
 // ClimateValueToObservation creates a FHIR Observation for a climate value.
-func ClimateValueToObservation(orgUnitID, cdsVariable string, value float64, unit string, year, month int, mapping *VariableMapping) *FHIRObservation {
+func ClimateValueToObservation(orgUnitID, cdsVariable string, value float64, unit string, year, month int, m *mapping.VariableMapping) *FHIRObservation {
 	period := fmt.Sprintf("%d%02d", year, month)
 	// FHIR resource IDs: alphanumeric + hyphens only, max 64 chars
 	safeVar := strings.ReplaceAll(cdsVariable, "_", "-")
@@ -77,7 +80,7 @@ func ClimateValueToObservation(orgUnitID, cdsVariable string, value float64, uni
 		Status:       "final",
 		Code: &CodeableConcept{
 			Coding: []Coding{{
-				System: cdsSystem,
+				System: CdsSystem,
 				Code:   cdsVariable,
 			}},
 			Text: cdsVariable,
@@ -92,25 +95,25 @@ func ClimateValueToObservation(orgUnitID, cdsVariable string, value float64, uni
 			Unit:  unit,
 		},
 		Extension: []FHIRExtension{
-			{URL: extDHIS2Period, ValueString: period},
-			{URL: extDHIS2DE, ValueString: mapping.DHIS2DataElement},
-			{URL: extDHIS2COC, ValueString: mapping.DHIS2CategoryOptCombo},
+			{URL: ExtDHIS2Period, ValueString: period},
+			{URL: ExtDHIS2DE, ValueString: m.DHIS2DataElement},
+			{URL: ExtDHIS2COC, ValueString: m.DHIS2CategoryOptCombo},
 		},
 	}
 }
 
 // ObservationToDataValue converts a FHIR Observation back to a DHIS2 DataValue.
-func ObservationToDataValue(obs *FHIRObservation) *DataValue {
-	dv := &DataValue{}
+func ObservationToDataValue(obs *FHIRObservation) *dhis2.DataValue {
+	dv := &dhis2.DataValue{}
 
 	// Extract DHIS2 metadata from extensions
 	for _, ext := range obs.Extension {
 		switch ext.URL {
-		case extDHIS2Period:
+		case ExtDHIS2Period:
 			dv.Period = ext.ValueString
-		case extDHIS2DE:
+		case ExtDHIS2DE:
 			dv.DataElement = ext.ValueString
-		case extDHIS2COC:
+		case ExtDHIS2COC:
 			dv.CategoryOptionCombo = ext.ValueString
 		}
 	}

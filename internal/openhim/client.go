@@ -1,4 +1,4 @@
-package main
+package openhim
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/didate/climate-mediator/internal/config"
 )
 
 type MediatorRegistration struct {
@@ -39,24 +41,24 @@ type Endpoint struct {
 }
 
 type OpenHIMClient struct {
-	cfg  *Config
+	Cfg  *config.Config
 	http *http.Client
 }
 
-func NewOpenHIMClient(cfg *Config) *OpenHIMClient {
+func NewOpenHIMClient(cfg *config.Config) *OpenHIMClient {
 	tr := &http.Transport{}
 	if cfg.OpenHIMTrustSelf {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	return &OpenHIMClient{
-		cfg:  cfg,
+		Cfg:  cfg,
 		http: &http.Client{Transport: tr, Timeout: 30 * time.Second},
 	}
 }
 
 func (c *OpenHIMClient) Register() error {
 	reg := MediatorRegistration{
-		URN:         c.cfg.MediatorURN,
+		URN:         c.Cfg.MediatorURN,
 		Version:     "0.1.0",
 		Name:        "Climate Data Mediator",
 		Description: "Pulls climate data from Copernicus CDS and pushes to DHIS2",
@@ -66,15 +68,15 @@ func (c *OpenHIMClient) Register() error {
 			c.channelConfig("Climate Push to DHIS2 Channel", "^/climate/push-to-dhis2.*$", "/climate/push-to-dhis2"),
 		},
 		Endpoints: []Endpoint{
-			{Name: "Climate Pull OrgUnit", Host: "localhost", Port: mustAtoi(c.cfg.MediatorPort), Path: "/climate/pull-orgunit", Type: "http"},
-			{Name: "Climate Pull Data", Host: "localhost", Port: mustAtoi(c.cfg.MediatorPort), Path: "/climate/pull-climate", Type: "http"},
-			{Name: "Climate Push DHIS2", Host: "localhost", Port: mustAtoi(c.cfg.MediatorPort), Path: "/climate/push-to-dhis2", Type: "http"},
+			{Name: "Climate Pull OrgUnit", Host: "localhost", Port: mustAtoi(c.Cfg.MediatorPort), Path: "/climate/pull-orgunit", Type: "http"},
+			{Name: "Climate Pull Data", Host: "localhost", Port: mustAtoi(c.Cfg.MediatorPort), Path: "/climate/pull-climate", Type: "http"},
+			{Name: "Climate Push DHIS2", Host: "localhost", Port: mustAtoi(c.Cfg.MediatorPort), Path: "/climate/push-to-dhis2", Type: "http"},
 		},
 	}
 
 	body, _ := json.Marshal(reg)
-	req, _ := http.NewRequest("POST", c.cfg.OpenHIMAPIURL+"/mediators", bytes.NewReader(body))
-	req.SetBasicAuth(c.cfg.OpenHIMUser, c.cfg.OpenHIMPassword)
+	req, _ := http.NewRequest("POST", c.Cfg.OpenHIMAPIURL+"/mediators", bytes.NewReader(body))
+	req.SetBasicAuth(c.Cfg.OpenHIMUser, c.Cfg.OpenHIMPassword)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
@@ -87,7 +89,7 @@ func (c *OpenHIMClient) Register() error {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("register returned %d: %s", resp.StatusCode, string(bodyBytes))
 	}
-	log.Printf("Mediator registered with OpenHIM (URN=%s)", c.cfg.MediatorURN)
+	log.Printf("Mediator registered with OpenHIM (URN=%s)", c.Cfg.MediatorURN)
 	return nil
 }
 
@@ -96,9 +98,9 @@ func (c *OpenHIMClient) Heartbeat() {
 	go func() {
 		for range ticker.C {
 			body := []byte(`{"uptime": 60.5}`)
-			url := fmt.Sprintf("%s/mediators/%s/heartbeat", c.cfg.OpenHIMAPIURL, c.cfg.MediatorURN)
+			url := fmt.Sprintf("%s/mediators/%s/heartbeat", c.Cfg.OpenHIMAPIURL, c.Cfg.MediatorURN)
 			req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
-			req.SetBasicAuth(c.cfg.OpenHIMUser, c.cfg.OpenHIMPassword)
+			req.SetBasicAuth(c.Cfg.OpenHIMUser, c.Cfg.OpenHIMPassword)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := c.http.Do(req)
 			if err != nil {
@@ -118,25 +120,25 @@ func (c *OpenHIMClient) channelConfig(name, pattern, path string) ChannelConfig 
 		AllowedRoles: []string{"climate-sync"},
 		Routes: []Endpoint{{
 			Name:    name + " Route",
-			Host:    c.cfg.MediatorHost,
-			Port:    mustAtoi(c.cfg.MediatorPort),
+			Host:    c.Cfg.MediatorHost,
+			Port:    mustAtoi(c.Cfg.MediatorPort),
 			Path:    path,
 			Primary: true,
 			Type:    "http",
-			Secured: c.cfg.MediatorScheme == "https",
+			Secured: c.Cfg.MediatorScheme == "https",
 		}},
 	}
 }
 
 func (c *OpenHIMClient) UpdateTransaction(transactionID string, update map[string]interface{}) error {
 	body, _ := json.Marshal(update)
-	url := fmt.Sprintf("%s/transactions/%s", c.cfg.OpenHIMAPIURL, transactionID)
+	url := fmt.Sprintf("%s/transactions/%s", c.Cfg.OpenHIMAPIURL, transactionID)
 
 	req, err := http.NewRequest("PUT", url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.SetBasicAuth(c.cfg.OpenHIMUser, c.cfg.OpenHIMPassword)
+	req.SetBasicAuth(c.Cfg.OpenHIMUser, c.Cfg.OpenHIMPassword)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
@@ -152,7 +154,7 @@ func (c *OpenHIMClient) UpdateTransaction(transactionID string, update map[strin
 	return nil
 }
 
-func (c *OpenHIMClient) updateTransactionFailed(transactionID, mediatorURN, message string) {
+func (c *OpenHIMClient) UpdateTransactionFailed(transactionID, mediatorURN, message string) {
 	c.UpdateTransaction(transactionID, map[string]interface{}{
 		"status": "Failed",
 		"response": map[string]interface{}{

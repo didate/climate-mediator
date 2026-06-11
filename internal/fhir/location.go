@@ -1,6 +1,10 @@
-package main
+package fhir
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/didate/climate-mediator/internal/dhis2"
+)
 
 // FHIRLocation represents a FHIR R4 Location with position (lat/lon).
 type FHIRLocation struct {
@@ -22,7 +26,7 @@ type Position struct {
 	Latitude  float64 `json:"latitude"`
 }
 
-func OrgUnitToLocation(ou OrgUnit, identifierSystem string) *FHIRLocation {
+func OrgUnitToLocation(ou dhis2.OrgUnit, identifierSystem string) *FHIRLocation {
 	loc := &FHIRLocation{
 		ResourceType: "Location",
 		ID:           ou.ID,
@@ -46,18 +50,18 @@ func OrgUnitToLocation(ou OrgUnit, identifierSystem string) *FHIRLocation {
 	return loc
 }
 
-func LocationToOrgUnit(loc *FHIRLocation) OrgUnit {
+func LocationToOrgUnit(loc *FHIRLocation) dhis2.OrgUnit {
 	id := loc.ID
 	if len(loc.Identifier) > 0 {
 		id = loc.Identifier[0].Value
 	}
-	ou := OrgUnit{
+	ou := dhis2.OrgUnit{
 		ID:   id,
 		Name: loc.Name,
 	}
 	if loc.Position != nil {
 		coords, _ := json.Marshal([]float64{loc.Position.Longitude, loc.Position.Latitude})
-		ou.Geometry = &Geometry{
+		ou.Geometry = &dhis2.Geometry{
 			Type:        "Point",
 			Coordinates: coords,
 		}

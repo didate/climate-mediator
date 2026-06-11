@@ -1,4 +1,4 @@
-package main
+package fhir
 
 import (
 	"bytes"
@@ -109,7 +109,7 @@ func (c *HAPIClient) PutObservation(obs *FHIRObservation) error {
 func (c *HAPIClient) GetObservations(code, date string) ([]FHIRObservation, error) {
 	// Search by system|code and date range (use start of next month as upper bound)
 	url := fmt.Sprintf("%s/Observation?code=%s|%s&date=ge%s-01&date=lt%s&_count=200",
-		c.BaseURL, cdsSystem, code, date, nextMonth(date))
+		c.BaseURL, CdsSystem, code, date, nextMonth(date))
 	var observations []FHIRObservation
 
 	for url != "" {

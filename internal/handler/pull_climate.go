@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"encoding/json"
@@ -8,27 +8,35 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/didate/climate-mediator/internal/cds"
+	"github.com/didate/climate-mediator/internal/config"
+	"github.com/didate/climate-mediator/internal/dhis2"
+	"github.com/didate/climate-mediator/internal/fhir"
+	"github.com/didate/climate-mediator/internal/mapping"
+	"github.com/didate/climate-mediator/internal/openhim"
+	"github.com/didate/climate-mediator/internal/period"
 )
 
-func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc *OpenHIMClient, mapping *MappingConfigFull) {
+func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Config, ohc *openhim.OpenHIMClient, mp *mapping.MappingConfigFull) {
 	log.Printf("Received %s %s", r.Method, r.URL.String())
 	transactionID := r.Header.Get("X-OpenHIM-TransactionID")
 
 	// Determine periods: either year/month or last N months
-	var periods []YearMonth
+	var periods []period.YearMonth
 	if y := r.URL.Query().Get("year"); y != "" {
 		m := r.URL.Query().Get("month")
 		if m == "" {
-			respondError(w, cfg.MediatorURN, http.StatusBadRequest, "Missing month param when year is specified")
+			openhim.RespondError(w, cfg.MediatorURN, http.StatusBadRequest, "Missing month param when year is specified")
 			return
 		}
 		year, _ := strconv.Atoi(y)
 		month, _ := strconv.Atoi(m)
 		if year < 1950 || month < 1 || month > 12 {
-			respondError(w, cfg.MediatorURN, http.StatusBadRequest, "Invalid year or month")
+			openhim.RespondError(w, cfg.MediatorURN, http.StatusBadRequest, "Invalid year or month")
 			return
 		}
-		periods = []YearMonth{{Year: year, Month: month}}
+		periods = []period.YearMonth{{Year: year, Month: month}}
 	} else {
 		months := 3 // default
 		if v := r.URL.Query().Get("months"); v != "" {
@@ -36,16 +44,16 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 				months = n
 			}
 		}
-		periods = GenerateMonthPeriods(months)
+		periods = period.GenerateMonthPeriods(months)
 	}
 
-	respondAccepted(w, cfg.MediatorURN, fmt.Sprintf("Pull climate data for %d period(s) started", len(periods)))
+	openhim.RespondAccepted(w, cfg.MediatorURN, fmt.Sprintf("Pull climate data for %d period(s) started", len(periods)))
 
 	go func() {
 		startTotal := time.Now()
-		cds := NewCDSClient(cfg.CDSAPIURL, cfg.CDSAPIKey)
-		hapi := NewHAPIClient(cfg.HAPIFhirURL)
-		var orchestrations []Orchestration
+		cdsClient := cds.NewCDSClient(cfg.CDSAPIURL, cfg.CDSAPIKey)
+		hapi := fhir.NewHAPIClient(cfg.HAPIFhirURL)
+		var orchestrations []openhim.Orchestration
 
 		// Get org units from HAPI FHIR
 		startLoc := time.Now()
@@ -54,19 +62,19 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 
 		if err != nil {
 			log.Printf("Fetch locations error: %v", err)
-			ohc.updateTransactionFailed(transactionID, cfg.MediatorURN,
+			ohc.UpdateTransactionFailed(transactionID, cfg.MediatorURN,
 				fmt.Sprintf("Failed to fetch locations: %v", err))
 			return
 		}
 
-		orchestrations = append(orchestrations, Orchestration{
+		orchestrations = append(orchestrations, openhim.Orchestration{
 			Name: "fetch-locations-from-hapi",
-			Request: OHRequest{
+			Request: openhim.OHRequest{
 				Path:      cfg.HAPIFhirURL + "/Location",
 				Method:    "GET",
 				Timestamp: startLoc,
 			},
-			Response: OHResponse{
+			Response: openhim.OHResponse{
 				Status:    200,
 				Headers:   map[string]string{"Content-Type": "application/json"},
 				Body:      fmt.Sprintf(`{"count":%d}`, len(locations)),
@@ -77,38 +85,38 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		log.Printf("Got %d locations from HAPI FHIR", len(locations))
 
 		// Convert locations to org units
-		orgUnits := make([]OrgUnit, 0, len(locations))
+		orgUnits := make([]dhis2.OrgUnit, 0, len(locations))
 		for _, loc := range locations {
-			ou := LocationToOrgUnit(&loc)
+			ou := fhir.LocationToOrgUnit(&loc)
 			if ou.Geometry != nil {
 				orgUnits = append(orgUnits, ou)
 			}
 		}
 		log.Printf("%d org units have coordinates", len(orgUnits))
 
-		// For each period × variable, download CDS data and extract values
+		// For each period x variable, download CDS data and extract values
 		totalSaved := 0
 		totalFailed := 0
 
 		for _, p := range periods {
 			// Store grids for computed variables (e.g., relative humidity)
-			grids := make(map[string]*CDSGridData)
+			grids := make(map[string]*cds.CDSGridData)
 
-			for _, m := range mapping.Mappings {
+			for _, m := range mp.Mappings {
 				startCDS := time.Now()
-				grid, err := cds.FetchMonthlyData(m.CDSDataset, m.CDSVariable, m.CDSProductType, p.Year, p.Month)
+				grid, err := cdsClient.FetchMonthlyData(m.CDSDataset, m.CDSVariable, m.CDSProductType, p.Year, p.Month)
 				endCDS := time.Now()
 
 				if err != nil {
 					log.Printf("CDS fetch failed for %s %s: %v", m.CDSVariable, p, err)
-					orchestrations = append(orchestrations, Orchestration{
+					orchestrations = append(orchestrations, openhim.Orchestration{
 						Name: fmt.Sprintf("fetch-cds-%s-%s", m.CDSVariable, p),
-						Request: OHRequest{
+						Request: openhim.OHRequest{
 							Path:      fmt.Sprintf("cds://%s/%s?%s", m.CDSDataset, m.CDSVariable, p),
 							Method:    "POST",
 							Timestamp: startCDS,
 						},
-						Response: OHResponse{
+						Response: openhim.OHResponse{
 							Status:    500,
 							Headers:   map[string]string{"Content-Type": "application/json"},
 							Body:      fmt.Sprintf(`{"error":%q}`, err.Error()),
@@ -118,14 +126,14 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 					continue
 				}
 
-				orchestrations = append(orchestrations, Orchestration{
+				orchestrations = append(orchestrations, openhim.Orchestration{
 					Name: fmt.Sprintf("fetch-cds-%s-%s", m.CDSVariable, p),
-					Request: OHRequest{
+					Request: openhim.OHRequest{
 						Path:      fmt.Sprintf("cds://%s/%s?%s", m.CDSDataset, m.CDSVariable, p),
 						Method:    "POST",
 						Timestamp: startCDS,
 					},
-					Response: OHResponse{
+					Response: openhim.OHResponse{
 						Status:    200,
 						Headers:   map[string]string{"Content-Type": "application/json"},
 						Body:      fmt.Sprintf(`{"lats":%d,"lons":%d}`, len(grid.Lats), len(grid.Lons)),
@@ -141,7 +149,7 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 				saved := 0
 				failed := 0
 
-				jobs := make(chan OrgUnit, len(orgUnits))
+				jobs := make(chan dhis2.OrgUnit, len(orgUnits))
 				var mu sync.Mutex
 				var wg sync.WaitGroup
 				currentMapping := m
@@ -170,8 +178,8 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 								continue
 							}
 
-							value, unit := TransformValue(rawValue, currentMapping.Transform)
-							obs := ClimateValueToObservation(ou.ID, currentMapping.CDSVariable, value, unit, currentPeriod.Year, currentPeriod.Month, &currentMapping)
+							value, unit := cds.TransformValue(rawValue, currentMapping.Transform)
+							obs := fhir.ClimateValueToObservation(ou.ID, currentMapping.CDSVariable, value, unit, currentPeriod.Year, currentPeriod.Month, &currentMapping)
 
 							if err := hapi.PutObservation(obs); err != nil {
 								log.Printf("Save Observation failed [%s/%s/%s]: %v", ou.ID, currentMapping.CDSVariable, currentPeriod, err)
@@ -197,14 +205,14 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 				totalSaved += saved
 				totalFailed += failed
 
-				orchestrations = append(orchestrations, Orchestration{
+				orchestrations = append(orchestrations, openhim.Orchestration{
 					Name: fmt.Sprintf("save-observations-%s-%s", m.CDSVariable, p),
-					Request: OHRequest{
+					Request: openhim.OHRequest{
 						Path:      cfg.HAPIFhirURL + "/Observation",
 						Method:    "PUT",
 						Timestamp: startSave,
 					},
-					Response: OHResponse{
+					Response: openhim.OHResponse{
 						Status:    200,
 						Headers:   map[string]string{"Content-Type": "application/json"},
 						Body:      fmt.Sprintf(`{"saved":%d,"failed":%d}`, saved, failed),
@@ -216,7 +224,7 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 			}
 
 			// Compute derived variables (e.g., relative humidity)
-			for _, c := range mapping.Computed {
+			for _, c := range mp.Computed {
 				if c.Compute == "relative_humidity" {
 					tempGrid := grids["2m_temperature"]
 					dewGrid := grids["2m_dewpoint_temperature"]
@@ -228,7 +236,7 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 					startSave := time.Now()
 					saved := 0
 					failed := 0
-					computedMapping := VariableMapping{
+					computedMapping := mapping.VariableMapping{
 						CDSVariable:           c.Name,
 						DHIS2DataElement:      c.DHIS2DataElement,
 						DHIS2CategoryOptCombo: c.DHIS2CategoryOptCombo,
@@ -249,8 +257,8 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 							continue
 						}
 
-						rh := ComputeRelativeHumidity(tempVal, dewVal)
-						obs := ClimateValueToObservation(ou.ID, c.Name, rh, "%", p.Year, p.Month, &computedMapping)
+						rh := cds.ComputeRelativeHumidity(tempVal, dewVal)
+						obs := fhir.ClimateValueToObservation(ou.ID, c.Name, rh, "%", p.Year, p.Month, &computedMapping)
 
 						if err := hapi.PutObservation(obs); err != nil {
 							log.Printf("Save RH Observation failed [%s]: %v", ou.ID, err)
@@ -263,14 +271,14 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 					totalSaved += saved
 					totalFailed += failed
 
-					orchestrations = append(orchestrations, Orchestration{
+					orchestrations = append(orchestrations, openhim.Orchestration{
 						Name: fmt.Sprintf("compute-%s-%s", c.Name, p),
-						Request: OHRequest{
+						Request: openhim.OHRequest{
 							Path:      "internal://compute-relative-humidity",
 							Method:    "COMPUTE",
 							Timestamp: startSave,
 						},
-						Response: OHResponse{
+						Response: openhim.OHResponse{
 							Status:    200,
 							Headers:   map[string]string{"Content-Type": "application/json"},
 							Body:      fmt.Sprintf(`{"saved":%d,"failed":%d}`, saved, failed),
@@ -299,7 +307,7 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		summary, _ := json.MarshalIndent(map[string]interface{}{
 			"periods":     periodStrs,
 			"orgUnits":    len(orgUnits),
-			"variables":   len(mapping.Mappings),
+			"variables":   len(mp.Mappings),
 			"totalSaved":  totalSaved,
 			"totalFailed": totalFailed,
 			"duration":    time.Since(startTotal).String(),

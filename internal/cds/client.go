@@ -1,10 +1,10 @@
-package main
+package cds
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"archive/zip"
 	"io"
 	"log"
 	"math"
@@ -266,7 +266,7 @@ func extractGribFromZip(zipPath string) (string, error) {
 			rc.Close()
 			os.Remove(tmpFile.Name())
 			return "", fmt.Errorf("extract file: %w", err)
-			}
+		}
 		tmpFile.Close()
 		rc.Close()
 
