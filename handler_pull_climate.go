@@ -154,6 +154,7 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 						for ou := range jobs {
 							lon, lat, ok := ou.Geometry.PointCoordinates()
 							if !ok {
+								log.Printf("No coordinates [OU=%s %s]", ou.ID, ou.Name)
 								mu.Lock()
 								failed++
 								mu.Unlock()
@@ -162,6 +163,7 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 
 							rawValue, ok := grid.ExtractValueForCoordinate(lat, lon)
 							if !ok {
+								log.Printf("No grid value [OU=%s %s] lat=%.4f lon=%.4f (outside grid or NaN)", ou.ID, ou.Name, lat, lon)
 								mu.Lock()
 								failed++
 								mu.Unlock()
@@ -235,6 +237,7 @@ func handlePullClimate(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 					for _, ou := range orgUnits {
 						lon, lat, ok := ou.Geometry.PointCoordinates()
 						if !ok {
+							log.Printf("No coordinates for RH [OU=%s %s]", ou.ID, ou.Name)
 							failed++
 							continue
 						}
