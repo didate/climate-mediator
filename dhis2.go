@@ -27,16 +27,54 @@ type Geometry struct {
 	Coordinates json.RawMessage `json:"coordinates"`
 }
 
-// PointCoordinates extracts [lon, lat] from a Point geometry.
+// PointCoordinates extracts [lon, lat] from any geometry type.
+// For Point: returns the coordinates directly.
+// For Polygon/MultiPolygon: computes the centroid of the outer ring.
 func (g *Geometry) PointCoordinates() (lon, lat float64, ok bool) {
-	if g.Type != "Point" {
+	switch g.Type {
+	case "Point":
+		var coords []float64
+		if err := json.Unmarshal(g.Coordinates, &coords); err != nil || len(coords) < 2 {
+			return 0, 0, false
+		}
+		return coords[0], coords[1], true
+
+	case "Polygon":
+		// [[[lon,lat], [lon,lat], ...]]
+		var rings [][][]float64
+		if err := json.Unmarshal(g.Coordinates, &rings); err != nil || len(rings) == 0 {
+			return 0, 0, false
+		}
+		return centroid(rings[0])
+
+	case "MultiPolygon":
+		// [[[[lon,lat], [lon,lat], ...]]]
+		var polys [][][][]float64
+		if err := json.Unmarshal(g.Coordinates, &polys); err != nil || len(polys) == 0 || len(polys[0]) == 0 {
+			return 0, 0, false
+		}
+		return centroid(polys[0][0])
+
+	default:
 		return 0, 0, false
 	}
-	var coords []float64
-	if err := json.Unmarshal(g.Coordinates, &coords); err != nil || len(coords) < 2 {
+}
+
+// centroid computes the centroid of a polygon ring.
+func centroid(ring [][]float64) (lon, lat float64, ok bool) {
+	if len(ring) == 0 {
 		return 0, 0, false
 	}
-	return coords[0], coords[1], true
+	var sumLon, sumLat float64
+	for _, pt := range ring {
+		if len(pt) < 2 {
+			continue
+		}
+		sumLon += pt[0]
+		sumLat += pt[1]
+	}
+	n := float64(len(ring))
+	return sumLon / n, sumLat / n, true
 }
 
 type DataValueSet struct {
@@ -107,7 +145,7 @@ func (c *DHIS2Client) FetchOrgUnitsWithCoordinates() ([]OrgUnit, error) {
 		return nil, fmt.Errorf("parse org units: %w", err)
 	}
 
-	// Filter to only Point geometries with valid coordinates
+	// Filter to OUs with valid coordinates (Point, Polygon, or MultiPolygon)
 	var filtered []OrgUnit
 	for _, ou := range result.OrganisationUnits {
 		if ou.Geometry != nil {
