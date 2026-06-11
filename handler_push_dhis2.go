@@ -46,27 +46,36 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 		hapi := NewHAPIClient(cfg.HAPIFhirURL)
 		var orchestrations []Orchestration
 
+		// Collect all variable codes to search (mappings + computed)
+		var varCodes []string
+		for _, m := range mapping.Mappings {
+			varCodes = append(varCodes, m.CDSVariable)
+		}
+		for _, c := range mapping.Computed {
+			varCodes = append(varCodes, c.Name)
+		}
+
 		// Fetch observations for each period × variable from HAPI
 		var allObservations []FHIRObservation
 
 		for _, p := range periods {
 			date := p.String()
-			for _, m := range mapping.Mappings {
+			for _, varCode := range varCodes {
 				startFetch := time.Now()
-				obs, err := hapi.GetObservations(m.CDSVariable, date)
+				obs, err := hapi.GetObservations(varCode, date)
 				endFetch := time.Now()
 
 				if err != nil {
-					log.Printf("Fetch observations for %s %s error: %v", m.CDSVariable, p, err)
+					log.Printf("Fetch observations for %s %s error: %v", varCode, p, err)
 					continue
 				}
 
 				allObservations = append(allObservations, obs...)
 
 				orchestrations = append(orchestrations, Orchestration{
-					Name: fmt.Sprintf("fetch-observations-%s-%s", m.CDSVariable, p),
+					Name: fmt.Sprintf("fetch-observations-%s-%s", varCode, p),
 					Request: OHRequest{
-						Path:      fmt.Sprintf("%s/Observation?code=%s&date=%s", cfg.HAPIFhirURL, m.CDSVariable, date),
+						Path:      fmt.Sprintf("%s/Observation?code=%s&date=%s", cfg.HAPIFhirURL, varCode, date),
 						Method:    "GET",
 						Timestamp: startFetch,
 					},
@@ -78,7 +87,7 @@ func handlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *Config, ohc 
 					},
 				})
 
-				log.Printf("Got %d observations for %s %s", len(obs), m.CDSVariable, p)
+				log.Printf("Got %d observations for %s %s", len(obs), varCode, p)
 			}
 		}
 
