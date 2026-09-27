@@ -61,6 +61,7 @@ Key variables:
 | `OU_IDENTIFIER_SYSTEM` | FHIR Location identifier system (default: `urn:dhis2:entrepot:organisationUnits`) |
 | `MAPPING_FILE` | Path to variable mapping JSON (default: `mapping.json`) |
 | `MAX_WORKERS` | Concurrent workers (default: `5`) |
+| `DEFAULT_MONTHS` | Past months processed when no period param is given (default: `1` = previous month) |
 
 See `.env.sample` for the full list.
 
@@ -98,7 +99,7 @@ Available transforms: `kelvin_to_celsius`, `m_to_mm`
 ### Local
 
 ```bash
-go run .
+go run ./cmd/server
 ```
 
 ### Docker
@@ -113,11 +114,11 @@ docker compose up -d
 # Step 1: Pull org units with coordinates to HAPI FHIR
 curl "http://localhost:8002/climate/pull-orgunit"
 
-# Step 2: Pull climate data for last 3 months
-curl "http://localhost:8002/climate/pull-climate?months=3"
+# Step 2: Pull climate data (default: previous month, see DEFAULT_MONTHS)
+curl "http://localhost:8002/climate/pull-climate"
 
 # Step 3: Push to DHIS2
-curl "http://localhost:8002/climate/push-to-dhis2?months=3"
+curl "http://localhost:8002/climate/push-to-dhis2"
 
 # Or for a specific month
 curl "http://localhost:8002/climate/pull-climate?year=2026&month=5"

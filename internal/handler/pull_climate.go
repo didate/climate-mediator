@@ -38,7 +38,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		}
 		periods = []period.YearMonth{{Year: year, Month: month}}
 	} else {
-		months := 3 // default
+		months := cfg.DefaultMonths
 		if v := r.URL.Query().Get("months"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				months = n

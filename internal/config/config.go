@@ -24,6 +24,7 @@ type Config struct {
 	OUIdentifierSystem string
 	MappingFile        string
 	MaxWorkers       int
+	DefaultMonths    int
 }
 
 func LoadConfig() *Config {
@@ -45,6 +46,7 @@ func LoadConfig() *Config {
 		OUIdentifierSystem: getEnvDefault("OU_IDENTIFIER_SYSTEM", "urn:dhis2:entrepot:organisationUnits"),
 		MappingFile:      getEnvDefault("MAPPING_FILE", "mapping.json"),
 		MaxWorkers:       getEnvDefaultInt("MAX_WORKERS", 5),
+		DefaultMonths:    getEnvDefaultInt("DEFAULT_MONTHS", 1),
 	}
 }
 
