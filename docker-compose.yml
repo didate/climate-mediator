@@ -15,13 +15,14 @@ services:
       DHIS2_TARGET_PAT: ${DHIS2_TARGET_PAT}
       CDS_API_KEY: ${CDS_API_KEY}
       CDS_API_URL: "https://cds.climate.copernicus.eu/api"
-      HAPI_FHIR_URL: https://fhir.dev.${DOMAIN}/fhir
+      HAPI_FHIR_URL: http://hapi:8080/fhir
       MAPPING_FILE: /mapping.json
       MAX_WORKERS: ${MAX_WORKERS:-5}
       DEFAULT_MONTHS: ${DEFAULT_MONTHS:-1}
       OU_IDENTIFIER_SYSTEM: "urn:dhis2:entrepot:organisationUnits"
     networks:
       - proxy
+      - interop_internal
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
@@ -33,4 +34,6 @@ services:
 
 networks:
   proxy:
+    external: true
+  interop_internal:
     external: true
