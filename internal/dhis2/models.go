@@ -13,9 +13,11 @@ type Geometry struct {
 	Coordinates json.RawMessage `json:"coordinates"`
 }
 
-// PointCoordinates extracts [lon, lat] from any geometry type.
-// For Point: returns the coordinates directly.
-// For Polygon/MultiPolygon: computes the centroid of the outer ring.
+// PointCoordinates returns a single [lon, lat] point representing the geometry.
+// For Point: the coordinates themselves.
+// For Polygon/MultiPolygon: the area-weighted centroid of all polygons (holes
+// subtracted), or a point guaranteed inside the shape when that centroid falls
+// outside it (concave shapes, scattered islands). See RepresentativePoint.
 func (g *Geometry) PointCoordinates() (lon, lat float64, ok bool) {
 	switch g.Type {
 	case "Point":
@@ -25,42 +27,39 @@ func (g *Geometry) PointCoordinates() (lon, lat float64, ok bool) {
 		}
 		return coords[0], coords[1], true
 
-	case "Polygon":
-		// [[[lon,lat], [lon,lat], ...]]
-		var rings [][][]float64
-		if err := json.Unmarshal(g.Coordinates, &rings); err != nil || len(rings) == 0 {
+	case "Polygon", "MultiPolygon":
+		polys, ok := g.Polygons()
+		if !ok {
 			return 0, 0, false
 		}
-		return centroid(rings[0])
-
-	case "MultiPolygon":
-		// [[[[lon,lat], [lon,lat], ...]]]
-		var polys [][][][]float64
-		if err := json.Unmarshal(g.Coordinates, &polys); err != nil || len(polys) == 0 || len(polys[0]) == 0 {
-			return 0, 0, false
-		}
-		return centroid(polys[0][0])
+		return RepresentativePoint(polys)
 
 	default:
 		return 0, 0, false
 	}
 }
 
-// centroid computes the centroid of a polygon ring.
-func centroid(ring [][]float64) (lon, lat float64, ok bool) {
-	if len(ring) == 0 {
-		return 0, 0, false
-	}
-	var sumLon, sumLat float64
-	for _, pt := range ring {
-		if len(pt) < 2 {
-			continue
+// Polygons returns the geometry as a list of polygons, each a list of rings
+// (outer ring first, then holes), each ring a list of [lon, lat] points.
+func (g *Geometry) Polygons() ([][][][]float64, bool) {
+	switch g.Type {
+	case "Polygon":
+		var rings [][][]float64
+		if err := json.Unmarshal(g.Coordinates, &rings); err != nil || len(rings) == 0 {
+			return nil, false
 		}
-		sumLon += pt[0]
-		sumLat += pt[1]
+		return [][][][]float64{rings}, true
+
+	case "MultiPolygon":
+		var polys [][][][]float64
+		if err := json.Unmarshal(g.Coordinates, &polys); err != nil || len(polys) == 0 {
+			return nil, false
+		}
+		return polys, true
+
+	default:
+		return nil, false
 	}
-	n := float64(len(ring))
-	return sumLon / n, sumLat / n, true
 }
 
 type DataValueSet struct {

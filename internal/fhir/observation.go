@@ -47,8 +47,14 @@ type Quantity struct {
 }
 
 type FHIRExtension struct {
-	URL         string `json:"url"`
-	ValueString string `json:"valueString,omitempty"`
+	URL             string      `json:"url"`
+	ValueString     string      `json:"valueString,omitempty"`
+	ValueAttachment *Attachment `json:"valueAttachment,omitempty"`
+}
+
+type Attachment struct {
+	ContentType string `json:"contentType,omitempty"`
+	Data        string `json:"data,omitempty"` // base64
 }
 
 const (

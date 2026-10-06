@@ -1,6 +1,7 @@
 package fhir
 
 import (
+	"encoding/base64"
 	"encoding/json"
 
 	"github.com/didate/climate-mediator/internal/dhis2"
@@ -8,13 +9,18 @@ import (
 
 // FHIRLocation represents a FHIR R4 Location with position (lat/lon).
 type FHIRLocation struct {
-	ResourceType string       `json:"resourceType"`
-	ID           string       `json:"id"`
-	Name         string       `json:"name"`
-	Status       string       `json:"status"`
-	Identifier   []Identifier `json:"identifier,omitempty"`
-	Position     *Position    `json:"position,omitempty"`
+	ResourceType string          `json:"resourceType"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Status       string          `json:"status"`
+	Identifier   []Identifier    `json:"identifier,omitempty"`
+	Position     *Position       `json:"position,omitempty"`
+	Extension    []FHIRExtension `json:"extension,omitempty"`
 }
+
+// ExtLocationBoundary is the FHIR R4 core extension holding a Location's
+// boundary as GeoJSON (kept so polygons are available for zonal statistics).
+const ExtLocationBoundary = "http://hl7.org/fhir/StructureDefinition/location-boundary-geojson"
 
 type Identifier struct {
 	System string `json:"system"`
@@ -45,9 +51,43 @@ func OrgUnitToLocation(ou dhis2.OrgUnit, identifierSystem string) *FHIRLocation 
 				Latitude:  lat,
 			}
 		}
+		if _, ok := ou.Geometry.Polygons(); ok {
+			if geojson, err := json.Marshal(ou.Geometry); err == nil {
+				loc.Extension = append(loc.Extension, FHIRExtension{
+					URL: ExtLocationBoundary,
+					ValueAttachment: &Attachment{
+						ContentType: "application/geo+json",
+						Data:        base64.StdEncoding.EncodeToString(geojson),
+					},
+				})
+			}
+		}
 	}
 
 	return loc
+}
+
+// LocationBoundary returns the polygon geometry stored in the Location's
+// boundary extension, if any.
+func LocationBoundary(loc *FHIRLocation) (*dhis2.Geometry, bool) {
+	for _, ext := range loc.Extension {
+		if ext.URL != ExtLocationBoundary || ext.ValueAttachment == nil {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(ext.ValueAttachment.Data)
+		if err != nil {
+			return nil, false
+		}
+		var g dhis2.Geometry
+		if err := json.Unmarshal(raw, &g); err != nil {
+			return nil, false
+		}
+		if _, ok := g.Polygons(); !ok {
+			return nil, false
+		}
+		return &g, true
+	}
+	return nil, false
 }
 
 func LocationToOrgUnit(loc *FHIRLocation) dhis2.OrgUnit {

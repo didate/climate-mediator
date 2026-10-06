@@ -36,7 +36,9 @@ Configured via `mapping.json`:
 - NetCDF format parsing with pure Go (no C dependencies)
 - Nearest grid point matching for each org unit's coordinates
 - Coastal fallback: searches nearby grid cells when nearest point is ocean (NaN)
-- Supports Point, Polygon, and MultiPolygon geometries (centroid for polygons)
+- Supports Point, Polygon, and MultiPolygon geometries: polygons use their area-weighted centroid (all parts, holes subtracted), or a point inside the shape when the centroid falls outside it
+- Stores polygon boundaries on the FHIR Location (`location-boundary-geojson` extension) for future zonal statistics
+- Logs the grid cell used per org unit, and warns when several org units share a cell through the coastal fallback
 - Computed variables: relative humidity derived from temperature + dewpoint
 - Configurable variable mapping via `mapping.json`
 - Retry logic on DHIS2 connection errors

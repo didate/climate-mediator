@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -102,7 +103,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 			// Store grids for computed variables (e.g., relative humidity)
 			grids := make(map[string]*cds.CDSGridData)
 
-			for _, m := range mp.Mappings {
+			for mi, m := range mp.Mappings {
 				startCDS := time.Now()
 				grid, err := cdsClient.FetchMonthlyData(m.CDSDataset, m.CDSVariable, m.CDSProductType, p.Year, p.Month)
 				endCDS := time.Now()
@@ -154,6 +155,10 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 				var wg sync.WaitGroup
 				currentMapping := m
 				currentPeriod := p
+				// Org units that reached a land cell through the coastal fallback, by cell.
+				// ERA5-Land variables share one land-sea mask, so the first variable is enough.
+				checkFallback := mi == 0
+				fallbackCells := make(map[[2]float64][]string)
 
 				for i := 0; i < cfg.MaxWorkers; i++ {
 					wg.Add(1)
@@ -179,6 +184,12 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 								continue
 							}
 							rawValue := sample.Value
+							if checkFallback && sample.Fallback {
+								mu.Lock()
+								cell := [2]float64{sample.CellLat, sample.CellLon}
+								fallbackCells[cell] = append(fallbackCells[cell], ou.Name)
+								mu.Unlock()
+							}
 
 							log.Printf("Grid sample [OU=%s %s] %s %s: centroid=(%.4f, %.4f) nearestCell=(%.4f, %.4f) usedCell=(%.4f, %.4f) fallback=%t raw=%g",
 								ou.ID, ou.Name, currentMapping.CDSVariable, currentPeriod, lat, lon,
@@ -207,6 +218,13 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 				close(jobs)
 				wg.Wait()
 				endSave := time.Now()
+
+				for cell, names := range fallbackCells {
+					if len(names) > 1 {
+						log.Printf("WARNING: %d org units use the same grid cell (%.4f, %.4f) via coastal fallback for %s, their values will be identical: %s",
+							len(names), cell[0], cell[1], p, strings.Join(names, ", "))
+					}
+				}
 
 				totalSaved += saved
 				totalFailed += failed

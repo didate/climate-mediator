@@ -43,7 +43,7 @@ func NewCDSClient(apiURL, apiKey string) *CDSClient {
 // It downloads a CSV/JSON formatted result for the specified variable and month.
 func (c *CDSClient) FetchMonthlyData(dataset, variable, productType string, year, month int) (*CDSGridData, error) {
 	// Guinea bounding box: lat 7-13°N, lon -15 to -7°W
-	// Using 0.25° grid resolution
+	// No grid parameter: data comes at ERA5-Land's native 0.1° resolution (~11 km)
 	// CDS API v1: POST /api/retrieve/v1/processes/{dataset}/execution
 	requestBody := map[string]interface{}{
 		"inputs": map[string]interface{}{
