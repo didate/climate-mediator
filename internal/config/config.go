@@ -22,6 +22,7 @@ type Config struct {
 	CDSAPIURL        string
 	HAPIFhirURL        string
 	OUIdentifierSystem string
+	LocationIDPrefix   string
 	MappingFile        string
 	MaxWorkers       int
 	DefaultMonths    int
@@ -44,6 +45,7 @@ func LoadConfig() *Config {
 		CDSAPIURL:        getEnvDefault("CDS_API_URL", "https://cds.climate.copernicus.eu/api"),
 		HAPIFhirURL:        os.Getenv("HAPI_FHIR_URL"),
 		OUIdentifierSystem: getEnvDefault("OU_IDENTIFIER_SYSTEM", "urn:dhis2:entrepot:organisationUnits"),
+		LocationIDPrefix:   getEnvDefault("LOCATION_ID_PREFIX", "entrepot"),
 		MappingFile:      getEnvDefault("MAPPING_FILE", "mapping.json"),
 		MaxWorkers:       getEnvDefaultInt("MAX_WORKERS", 5),
 		DefaultMonths:    getEnvDefaultInt("DEFAULT_MONTHS", 1),

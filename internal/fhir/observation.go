@@ -61,11 +61,12 @@ const (
 	ExtDHIS2Period = "https://dhis2.org/fhir/period"
 	ExtDHIS2DE     = "https://dhis2.org/fhir/dataElement"
 	ExtDHIS2COC    = "https://dhis2.org/fhir/categoryOptionCombo"
+	ExtDHIS2OU     = "https://dhis2.org/fhir/orgUnit"
 	CdsSystem      = "https://cds.climate.copernicus.eu/variables"
 )
 
 // ClimateValueToObservation creates a FHIR Observation for a climate value.
-func ClimateValueToObservation(orgUnitID, cdsVariable string, value float64, unit string, year, month int, m *mapping.VariableMapping) *FHIRObservation {
+func ClimateValueToObservation(orgUnitID, locationID, cdsVariable string, value float64, unit string, year, month int, m *mapping.VariableMapping) *FHIRObservation {
 	period := fmt.Sprintf("%d%02d", year, month)
 	// FHIR resource IDs: alphanumeric + hyphens only, max 64 chars
 	safeVar := strings.ReplaceAll(cdsVariable, "_", "-")
@@ -91,7 +92,7 @@ func ClimateValueToObservation(orgUnitID, cdsVariable string, value float64, uni
 			}},
 			Text: cdsVariable,
 		},
-		Subject: &Reference{Reference: "Location/" + orgUnitID},
+		Subject: &Reference{Reference: "Location/" + locationID},
 		EffectivePeriod: &FHIRPeriod{
 			Start: start,
 			End:   end,
@@ -104,6 +105,7 @@ func ClimateValueToObservation(orgUnitID, cdsVariable string, value float64, uni
 			{URL: ExtDHIS2Period, ValueString: period},
 			{URL: ExtDHIS2DE, ValueString: m.DHIS2DataElement},
 			{URL: ExtDHIS2COC, ValueString: m.DHIS2CategoryOptCombo},
+			{URL: ExtDHIS2OU, ValueString: orgUnitID},
 		},
 	}
 }
@@ -121,13 +123,14 @@ func ObservationToDataValue(obs *FHIRObservation) *dhis2.DataValue {
 			dv.DataElement = ext.ValueString
 		case ExtDHIS2COC:
 			dv.CategoryOptionCombo = ext.ValueString
+		case ExtDHIS2OU:
+			dv.OrgUnit = ext.ValueString
 		}
 	}
 
-	// Extract org unit from subject reference
-	if obs.Subject != nil {
-		parts := splitLast(obs.Subject.Reference, "/")
-		dv.OrgUnit = parts
+	// Observations written before the orgUnit extension: the subject is Location/<uid>
+	if dv.OrgUnit == "" && obs.Subject != nil {
+		dv.OrgUnit = splitLast(obs.Subject.Reference, "/")
 	}
 
 	// Extract value

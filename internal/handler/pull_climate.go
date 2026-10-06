@@ -87,11 +87,21 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 
 		// Convert locations to org units
 		orgUnits := make([]dhis2.OrgUnit, 0, len(locations))
+		legacy := 0
 		for _, loc := range locations {
 			ou := fhir.LocationToOrgUnit(&loc)
+			// Skip Locations stored under another ID (e.g. before LOCATION_ID_PREFIX)
+			// so an org unit is never processed twice with different coordinates
+			if loc.ID != fhir.LocationID(cfg.LocationIDPrefix, ou.ID) {
+				legacy++
+				continue
+			}
 			if ou.Geometry != nil {
 				orgUnits = append(orgUnits, ou)
 			}
+		}
+		if legacy > 0 {
+			log.Printf("Skipped %d Location(s) whose ID does not use prefix %q (legacy, run pull-orgunit to recreate them)", legacy, cfg.LocationIDPrefix)
 		}
 		log.Printf("%d org units have coordinates", len(orgUnits))
 
@@ -196,7 +206,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 								sample.NearestLat, sample.NearestLon, sample.CellLat, sample.CellLon, sample.Fallback, rawValue)
 
 							value, unit := cds.TransformValue(rawValue, currentMapping.Transform, currentPeriod.Year, currentPeriod.Month)
-							obs := fhir.ClimateValueToObservation(ou.ID, currentMapping.CDSVariable, value, unit, currentPeriod.Year, currentPeriod.Month, &currentMapping)
+							obs := fhir.ClimateValueToObservation(ou.ID, fhir.LocationID(cfg.LocationIDPrefix, ou.ID), currentMapping.CDSVariable, value, unit, currentPeriod.Year, currentPeriod.Month, &currentMapping)
 
 							if err := hapi.PutObservation(obs); err != nil {
 								log.Printf("Save Observation failed [%s/%s/%s]: %v", ou.ID, currentMapping.CDSVariable, currentPeriod, err)
@@ -282,7 +292,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 						}
 
 						rh := cds.ComputeRelativeHumidity(tempVal, dewVal)
-						obs := fhir.ClimateValueToObservation(ou.ID, c.Name, rh, "%", p.Year, p.Month, &computedMapping)
+						obs := fhir.ClimateValueToObservation(ou.ID, fhir.LocationID(cfg.LocationIDPrefix, ou.ID), c.Name, rh, "%", p.Year, p.Month, &computedMapping)
 
 						if err := hapi.PutObservation(obs); err != nil {
 							log.Printf("Save RH Observation failed [%s]: %v", ou.ID, err)

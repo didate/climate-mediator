@@ -32,10 +32,21 @@ type Position struct {
 	Latitude  float64 `json:"latitude"`
 }
 
-func OrgUnitToLocation(ou dhis2.OrgUnit, identifierSystem string) *FHIRLocation {
+// LocationID returns the HAPI resource ID for an org unit. The prefix keeps
+// this mediator's Locations apart from other mediators writing to the same
+// HAPI server (e.g. dhis2-sync-mediator uses the bare org unit UID), since a
+// PUT replaces the whole resource. An empty prefix uses the bare UID.
+func LocationID(prefix, orgUnitID string) string {
+	if prefix == "" {
+		return orgUnitID
+	}
+	return prefix + "-" + orgUnitID
+}
+
+func OrgUnitToLocation(ou dhis2.OrgUnit, identifierSystem, idPrefix string) *FHIRLocation {
 	loc := &FHIRLocation{
 		ResourceType: "Location",
-		ID:           ou.ID,
+		ID:           LocationID(idPrefix, ou.ID),
 		Name:         ou.Name,
 		Status:       "active",
 		Identifier: []Identifier{{

@@ -61,6 +61,7 @@ Key variables:
 | `CDS_API_KEY` | Copernicus CDS API key ([get one here](https://cds.climate.copernicus.eu)) |
 | `HAPI_FHIR_URL` | HAPI FHIR server URL (internal, e.g. `http://hapi:8080/fhir` on the `interop_internal` network) |
 | `OU_IDENTIFIER_SYSTEM` | FHIR Location identifier system (default: `urn:dhis2:entrepot:organisationUnits`) |
+| `LOCATION_ID_PREFIX` | HAPI Location IDs are `<prefix>-<orgUnitUID>` so they never collide with other mediators sharing HAPI (default: `entrepot`) |
 | `MAPPING_FILE` | Path to variable mapping JSON (default: `mapping.json`) |
 | `MAX_WORKERS` | Concurrent workers (default: `5`) |
 | `DEFAULT_MONTHS` | Past months processed when no period param is given (default: `1` = previous month) |

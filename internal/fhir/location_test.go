@@ -11,8 +11,11 @@ func TestOrgUnitToLocationStoresBoundary(t *testing.T) {
 	coords := json.RawMessage(`[[[0,0],[2,0],[2,2],[0,2],[0,0]]]`)
 	ou := dhis2.OrgUnit{ID: "ou1", Name: "DPS Test", Geometry: &dhis2.Geometry{Type: "Polygon", Coordinates: coords}}
 
-	loc := OrgUnitToLocation(ou, "urn:test")
+	loc := OrgUnitToLocation(ou, "urn:test", "entrepot")
 
+	if loc.ID != "entrepot-ou1" {
+		t.Errorf("ID = %q, want entrepot-ou1", loc.ID)
+	}
 	if loc.Position == nil || loc.Position.Longitude != 1 || loc.Position.Latitude != 1 {
 		t.Fatalf("position = %+v, want (1, 1)", loc.Position)
 	}
@@ -31,7 +34,7 @@ func TestOrgUnitToLocationStoresBoundary(t *testing.T) {
 
 func TestOrgUnitToLocationPointHasNoBoundary(t *testing.T) {
 	ou := dhis2.OrgUnit{ID: "ou2", Geometry: &dhis2.Geometry{Type: "Point", Coordinates: json.RawMessage(`[-13.5,9.8]`)}}
-	loc := OrgUnitToLocation(ou, "urn:test")
+	loc := OrgUnitToLocation(ou, "urn:test", "entrepot")
 	if len(loc.Extension) != 0 {
 		t.Fatalf("unexpected extensions: %+v", loc.Extension)
 	}
