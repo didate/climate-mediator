@@ -24,8 +24,8 @@
       "cdsProductType": "monthly_averaged_reanalysis",
       "dhis2DataElement": "ag0JMnTyqOL",
       "dhis2CategoryOptionCombo": "",
-      "transform": "m_to_mm",
-      "description": "Précipitations (ERA5-Land)"
+      "transform": "m_per_day_to_mm_month",
+      "description": "Précipitations totales du mois (mm), ERA5-Land"
     }
   ],
   "computed": [

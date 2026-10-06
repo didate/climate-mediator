@@ -277,32 +277,57 @@ func extractGribFromZip(zipPath string) (string, error) {
 	return "", fmt.Errorf("no data file found in ZIP")
 }
 
+// GridSample describes how a value was read from the grid for a coordinate,
+// so callers can log or audit which cell was used.
+type GridSample struct {
+	Value      float64
+	NearestLat float64 // centre of the grid cell nearest to the coordinate
+	NearestLon float64
+	CellLat    float64 // centre of the grid cell whose value was used
+	CellLon    float64
+	Fallback   bool // true when the nearest cell was NaN and a neighbour was used
+}
+
 // ExtractValueForCoordinate finds the nearest grid point value for a given lat/lon.
 // If the nearest point is NaN (ocean in ERA5-Land), it searches nearby cells
 // within a radius of up to 3 grid points.
 func (grid *CDSGridData) ExtractValueForCoordinate(lat, lon float64) (float64, bool) {
+	s, ok := grid.SampleNearest(lat, lon)
+	return s.Value, ok
+}
+
+// SampleNearest is ExtractValueForCoordinate, also reporting which cell was used.
+func (grid *CDSGridData) SampleNearest(lat, lon float64) (GridSample, bool) {
 	if len(grid.Lats) == 0 || len(grid.Lons) == 0 {
-		return 0, false
+		return GridSample{}, false
 	}
 
 	latIdx := nearestIndex(grid.Lats, lat)
 	lonIdx := nearestIndex(grid.Lons, lon)
 
 	if latIdx < 0 || lonIdx < 0 || latIdx >= len(grid.Values) || lonIdx >= len(grid.Values[latIdx]) {
-		return 0, false
+		return GridSample{}, false
+	}
+
+	s := GridSample{
+		NearestLat: grid.Lats[latIdx],
+		NearestLon: grid.Lons[lonIdx],
 	}
 
 	val := grid.Values[latIdx][lonIdx]
 	if !math.IsNaN(val) {
-		return val, true
+		s.Value, s.CellLat, s.CellLon = val, s.NearestLat, s.NearestLon
+		return s, true
 	}
 
 	// Search nearby cells (expanding radius up to 3 grid points)
+	s.Fallback = true
 	nLat := len(grid.Lats)
 	nLon := len(grid.Lons)
 	for radius := 1; radius <= 3; radius++ {
 		bestDist := math.MaxFloat64
 		bestVal := math.NaN()
+		bestI, bestJ := -1, -1
 		for di := -radius; di <= radius; di++ {
 			for dj := -radius; dj <= radius; dj++ {
 				ni := latIdx + di
@@ -318,15 +343,17 @@ func (grid *CDSGridData) ExtractValueForCoordinate(lat, lon float64) (float64, b
 				if dist < bestDist {
 					bestDist = dist
 					bestVal = v
+					bestI, bestJ = ni, nj
 				}
 			}
 		}
 		if !math.IsNaN(bestVal) {
-			return bestVal, true
+			s.Value, s.CellLat, s.CellLon = bestVal, grid.Lats[bestI], grid.Lons[bestJ]
+			return s, true
 		}
 	}
 
-	return 0, false
+	return s, false
 }
 
 func nearestIndex(arr []float64, target float64) int {
@@ -343,15 +370,27 @@ func nearestIndex(arr []float64, target float64) int {
 }
 
 // TransformValue applies unit conversion based on the transform type.
-func TransformValue(value float64, transform string) (float64, string) {
+// year and month identify the period the value covers; they are needed by
+// transforms that scale a daily rate to a monthly total.
+func TransformValue(value float64, transform string, year, month int) (float64, string) {
 	switch transform {
 	case "kelvin_to_celsius":
 		return value - 273.15, "Cel"
 	case "m_to_mm":
 		return value * 1000, "mm"
+	case "m_per_day_to_mm_month":
+		// ERA5-Land monthly means store accumulations as the mean daily
+		// accumulation (m/day); the monthly total is that times the days in the month.
+		return value * 1000 * float64(daysInMonth(year, month)), "mm"
 	default:
 		return value, ""
 	}
+}
+
+// daysInMonth returns the number of days in the month, accounting for leap years.
+func daysInMonth(year, month int) int {
+	// Day 0 of the next month is the last day of this month
+	return time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 // ComputeRelativeHumidity calculates RH from temperature and dewpoint (both in Kelvin).

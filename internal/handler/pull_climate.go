@@ -169,16 +169,22 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 								continue
 							}
 
-							rawValue, ok := grid.ExtractValueForCoordinate(lat, lon)
+							sample, ok := grid.SampleNearest(lat, lon)
 							if !ok {
-								log.Printf("No grid value [OU=%s %s] lat=%.4f lon=%.4f (outside grid or NaN)", ou.ID, ou.Name, lat, lon)
+								log.Printf("No grid value [OU=%s %s] lat=%.4f lon=%.4f nearestCell=(%.4f, %.4f) fallback=%t (outside grid or NaN)",
+									ou.ID, ou.Name, lat, lon, sample.NearestLat, sample.NearestLon, sample.Fallback)
 								mu.Lock()
 								failed++
 								mu.Unlock()
 								continue
 							}
+							rawValue := sample.Value
 
-							value, unit := cds.TransformValue(rawValue, currentMapping.Transform)
+							log.Printf("Grid sample [OU=%s %s] %s %s: centroid=(%.4f, %.4f) nearestCell=(%.4f, %.4f) usedCell=(%.4f, %.4f) fallback=%t raw=%g",
+								ou.ID, ou.Name, currentMapping.CDSVariable, currentPeriod, lat, lon,
+								sample.NearestLat, sample.NearestLon, sample.CellLat, sample.CellLon, sample.Fallback, rawValue)
+
+							value, unit := cds.TransformValue(rawValue, currentMapping.Transform, currentPeriod.Year, currentPeriod.Month)
 							obs := fhir.ClimateValueToObservation(ou.ID, currentMapping.CDSVariable, value, unit, currentPeriod.Year, currentPeriod.Month, &currentMapping)
 
 							if err := hapi.PutObservation(obs); err != nil {

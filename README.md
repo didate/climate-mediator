@@ -26,7 +26,7 @@ Configured via `mapping.json`:
 |---|---|---|
 | `2m_temperature` | Mean air temperature | Kelvin to Celsius |
 | `2m_dewpoint_temperature` | Dewpoint temperature | Kelvin to Celsius |
-| `total_precipitation` | Total precipitation | meters to mm |
+| `total_precipitation` | Monthly total precipitation (mm) | mean daily m → monthly mm (× 1000 × days in month) |
 | `relative_humidity` (computed) | Relative humidity | Magnus formula from T + Td |
 
 ## Features
@@ -92,7 +92,13 @@ The `mapping.json` file defines which CDS variables map to which DHIS2 data elem
 }
 ```
 
-Available transforms: `kelvin_to_celsius`, `m_to_mm`
+Available transforms:
+
+| Transform | Formula | Use |
+|---|---|---|
+| `kelvin_to_celsius` | K − 273.15 | Temperatures |
+| `m_to_mm` | m × 1000 | Accumulations already covering the target period (hourly/daily data) |
+| `m_per_day_to_mm_month` | m/day × 1000 × days in month | Accumulations from ERA5-Land *monthly means*, which are mean daily values ([ECMWF conversion table](https://confluence.ecmwf.int/spaces/CKB/pages/197702790/Conversion+table+for+accumulated+variables+total+precipitation+fluxes)) |
 
 ## Running
 
