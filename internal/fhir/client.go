@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
+	"strings"
 	"time"
 )
 
@@ -76,7 +78,7 @@ func (c *HAPIClient) GetAllLocations(system string) ([]FHIRLocation, error) {
 				locations = append(locations, loc)
 			}
 		}
-		url = nextLink(bundle)
+		url = c.nextLink(bundle)
 	}
 
 	return locations, nil
@@ -123,7 +125,7 @@ func (c *HAPIClient) GetObservations(code, date string) ([]FHIRObservation, erro
 				observations = append(observations, obs)
 			}
 		}
-		url = nextLink(bundle)
+		url = c.nextLink(bundle)
 	}
 
 	return observations, nil
@@ -169,11 +171,29 @@ func nextMonth(yearMonth string) string {
 	return next.Format("2006-01-02")
 }
 
-func nextLink(b *FHIRBundle) string {
+// nextLink returns the bundle's "next" page URL, rebased onto c.BaseURL.
+// HAPI builds paging links from its public server_address (the OpenHIM router),
+// which the mediator cannot call without credentials, so only the path suffix
+// and query are kept.
+func (c *HAPIClient) nextLink(b *FHIRBundle) string {
 	for _, l := range b.Link {
-		if l.Relation == "next" {
+		if l.Relation != "next" {
+			continue
+		}
+		next, err := neturl.Parse(l.URL)
+		if err != nil {
 			return l.URL
 		}
+		base, err := neturl.Parse(c.BaseURL)
+		if err != nil {
+			return l.URL
+		}
+		basePath := strings.TrimSuffix(base.Path, "/")
+		if strings.HasPrefix(next.Path, basePath) {
+			base.Path = basePath + strings.TrimPrefix(next.Path, basePath)
+		}
+		base.RawQuery = next.RawQuery
+		return base.String()
 	}
 	return ""
 }
