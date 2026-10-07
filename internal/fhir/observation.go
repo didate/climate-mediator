@@ -3,6 +3,7 @@ package fhir
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/didate/climate-mediator/internal/dhis2"
 	"github.com/didate/climate-mediator/internal/mapping"
@@ -73,13 +74,9 @@ func ClimateValueToObservation(orgUnitID, locationID, cdsVariable string, value 
 	id := fmt.Sprintf("%s-%s-%s", orgUnitID, safeVar, period)
 
 	start := fmt.Sprintf("%d-%02d-01", year, month)
-	// End of month
-	endYear, endMonth := year, month+1
-	if endMonth > 12 {
-		endMonth = 1
-		endYear++
-	}
-	end := fmt.Sprintf("%d-%02d-01", endYear, endMonth)
+	// Last day of the month: FHIR Period.end is inclusive, so ending on the 1st
+	// of the next month would make this Observation match that month's searches
+	end := time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
 
 	return &FHIRObservation{
 		ResourceType: "Observation",

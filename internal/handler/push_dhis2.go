@@ -77,6 +77,9 @@ func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 					continue
 				}
 
+				// The date search also matches the previous month for Observations
+				// written before their period ended on the month's last day
+				obs = observationsForPeriod(obs, p.DHIS2Period())
 				allObservations = append(allObservations, obs...)
 
 				orchestrations = append(orchestrations, openhim.Orchestration{
@@ -232,4 +235,18 @@ func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 
 		log.Printf("Push to DHIS2 completed in %v", time.Since(startTotal))
 	}()
+}
+
+// observationsForPeriod keeps the Observations whose DHIS2 period extension is period.
+func observationsForPeriod(obs []fhir.FHIRObservation, period string) []fhir.FHIRObservation {
+	kept := obs[:0]
+	for _, o := range obs {
+		for _, ext := range o.Extension {
+			if ext.URL == fhir.ExtDHIS2Period && ext.ValueString == period {
+				kept = append(kept, o)
+				break
+			}
+		}
+	}
+	return kept
 }
