@@ -115,15 +115,21 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 
 			for mi, m := range mp.Mappings {
 				startCDS := time.Now()
-				grid, err := cdsClient.FetchMonthlyData(m.CDSDataset, m.CDSVariable, m.CDSProductType, p.Year, p.Month)
+				var grid *cds.CDSGridData
+				var err error
+				if m.DailyStatistic != "" {
+					grid, err = cdsClient.FetchDailyStatistics(m.CDSDataset, m.Key(), m.DailyStatistic, m.MonthlyAggregation, p.Year, p.Month)
+				} else {
+					grid, err = cdsClient.FetchMonthlyData(m.CDSDataset, m.Key(), m.CDSProductType, p.Year, p.Month)
+				}
 				endCDS := time.Now()
 
 				if err != nil {
-					log.Printf("CDS fetch failed for %s %s: %v", m.CDSVariable, p, err)
+					log.Printf("CDS fetch failed for %s %s: %v", m.Key(), p, err)
 					orchestrations = append(orchestrations, openhim.Orchestration{
-						Name: fmt.Sprintf("fetch-cds-%s-%s", m.CDSVariable, p),
+						Name: fmt.Sprintf("fetch-cds-%s-%s", m.Key(), p),
 						Request: openhim.OHRequest{
-							Path:      fmt.Sprintf("cds://%s/%s?%s", m.CDSDataset, m.CDSVariable, p),
+							Path:      fmt.Sprintf("cds://%s/%s?%s", m.CDSDataset, m.Key(), p),
 							Method:    "POST",
 							Timestamp: startCDS,
 						},
@@ -138,9 +144,9 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 				}
 
 				orchestrations = append(orchestrations, openhim.Orchestration{
-					Name: fmt.Sprintf("fetch-cds-%s-%s", m.CDSVariable, p),
+					Name: fmt.Sprintf("fetch-cds-%s-%s", m.Key(), p),
 					Request: openhim.OHRequest{
-						Path:      fmt.Sprintf("cds://%s/%s?%s", m.CDSDataset, m.CDSVariable, p),
+						Path:      fmt.Sprintf("cds://%s/%s?%s", m.CDSDataset, m.Key(), p),
 						Method:    "POST",
 						Timestamp: startCDS,
 					},
@@ -152,8 +158,8 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 					},
 				})
 
-				log.Printf("Downloaded CDS grid for %s %s: %dx%d", m.CDSVariable, p, len(grid.Lats), len(grid.Lons))
-				grids[m.CDSVariable] = grid
+				log.Printf("Downloaded CDS grid for %s %s: %dx%d", m.Key(), p, len(grid.Lats), len(grid.Lons))
+				grids[m.Key()] = grid
 
 				// Extract values for each org unit and save as Observations
 				startSave := time.Now()
@@ -202,14 +208,14 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 							}
 
 							log.Printf("Grid sample [OU=%s %s] %s %s: centroid=(%.4f, %.4f) nearestCell=(%.4f, %.4f) usedCell=(%.4f, %.4f) fallback=%t raw=%g",
-								ou.ID, ou.Name, currentMapping.CDSVariable, currentPeriod, lat, lon,
+								ou.ID, ou.Name, currentMapping.Key(), currentPeriod, lat, lon,
 								sample.NearestLat, sample.NearestLon, sample.CellLat, sample.CellLon, sample.Fallback, rawValue)
 
 							value, unit := cds.TransformValue(rawValue, currentMapping.Transform, currentPeriod.Year, currentPeriod.Month)
-							obs := fhir.ClimateValueToObservation(ou.ID, fhir.LocationID(cfg.LocationIDPrefix, ou.ID), currentMapping.CDSVariable, value, unit, currentPeriod.Year, currentPeriod.Month, &currentMapping)
+							obs := fhir.ClimateValueToObservation(ou.ID, fhir.LocationID(cfg.LocationIDPrefix, ou.ID), currentMapping.Key(), value, unit, currentPeriod.Year, currentPeriod.Month, &currentMapping)
 
 							if err := hapi.PutObservation(obs); err != nil {
-								log.Printf("Save Observation failed [%s/%s/%s]: %v", ou.ID, currentMapping.CDSVariable, currentPeriod, err)
+								log.Printf("Save Observation failed [%s/%s/%s]: %v", ou.ID, currentMapping.Key(), currentPeriod, err)
 								mu.Lock()
 								failed++
 								mu.Unlock()
@@ -240,7 +246,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 				totalFailed += failed
 
 				orchestrations = append(orchestrations, openhim.Orchestration{
-					Name: fmt.Sprintf("save-observations-%s-%s", m.CDSVariable, p),
+					Name: fmt.Sprintf("save-observations-%s-%s", m.Key(), p),
 					Request: openhim.OHRequest{
 						Path:      cfg.HAPIFhirURL + "/Observation",
 						Method:    "PUT",
@@ -254,7 +260,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 					},
 				})
 
-				log.Printf("Variable %s %s: saved %d, failed %d in %v", m.CDSVariable, p, saved, failed, endSave.Sub(startSave))
+				log.Printf("Variable %s %s: saved %d, failed %d in %v", m.Key(), p, saved, failed, endSave.Sub(startSave))
 			}
 
 			// Compute derived variables (e.g., relative humidity)

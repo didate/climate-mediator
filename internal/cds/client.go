@@ -39,27 +39,58 @@ func NewCDSClient(apiURL, apiKey string) *CDSClient {
 	}
 }
 
-// FetchMonthlyData requests monthly climate data from CDS for Guinea's bounding box.
-// It downloads a CSV/JSON formatted result for the specified variable and month.
-func (c *CDSClient) FetchMonthlyData(dataset, variable, productType string, year, month int) (*CDSGridData, error) {
-	// Guinea bounding box: lat 7-13°N, lon -15 to -7°W
-	// No grid parameter: data comes at ERA5-Land's native 0.1° resolution (~11 km)
-	// CDS API v1: POST /api/retrieve/v1/processes/{dataset}/execution
-	requestBody := map[string]interface{}{
-		"inputs": map[string]interface{}{
-			"product_type": []string{productType},
-			"variable":     []string{variable},
-			"year":         []string{fmt.Sprintf("%d", year)},
-			"month":        []string{fmt.Sprintf("%02d", month)},
-			"time":         []string{"00:00"},
-			"data_format":  "netcdf",
-			"area":         []float64{13, -15, 7, -7}, // [N, W, S, E]
-		},
-	}
+// guineaArea is Guinea's bounding box [N, W, S, E]: lat 7-13°N, lon -15 to -7°W.
+var guineaArea = []float64{13, -15, 7, -7}
 
-	body, _ := json.Marshal(requestBody)
+// FetchMonthlyData requests a monthly means dataset (e.g. reanalysis-era5-land-monthly-means)
+// from CDS for Guinea's bounding box, for the specified variable and month.
+func (c *CDSClient) FetchMonthlyData(dataset, variable, productType string, year, month int) (*CDSGridData, error) {
+	// No grid parameter: data comes at ERA5-Land's native 0.1° resolution (~11 km)
+	inputs := map[string]interface{}{
+		"product_type": []string{productType},
+		"variable":     []string{variable},
+		"year":         []string{fmt.Sprintf("%d", year)},
+		"month":        []string{fmt.Sprintf("%02d", month)},
+		"time":         []string{"00:00"},
+		"data_format":  "netcdf",
+		"area":         guineaArea,
+	}
+	return c.fetch(dataset, inputs, variable, year, month, "")
+}
+
+// FetchDailyStatistics requests one daily statistic (daily_mean, daily_maximum or
+// daily_minimum) for every day of the month from a daily statistics dataset
+// (derived-era5-land-daily-statistics), and reduces the days to a single monthly
+// grid with monthlyAggregation (max, min or mean).
+func (c *CDSClient) FetchDailyStatistics(dataset, variable, statistic, monthlyAggregation string, year, month int) (*CDSGridData, error) {
+	return c.fetch(dataset, dailyStatisticsInputs(variable, statistic, year, month), variable, year, month, monthlyAggregation)
+}
+
+// dailyStatisticsInputs builds the CDS request inputs for a whole month of daily statistics.
+func dailyStatisticsInputs(variable, statistic string, year, month int) map[string]interface{} {
+	days := make([]string, daysInMonth(year, month))
+	for i := range days {
+		days[i] = fmt.Sprintf("%02d", i+1)
+	}
+	return map[string]interface{}{
+		"variable":        []string{variable},
+		"year":            fmt.Sprintf("%d", year),
+		"month":           fmt.Sprintf("%02d", month),
+		"day":             days,
+		"daily_statistic": statistic,
+		"time_zone":       "utc+00:00", // Guinea is UTC+0, so days match local days
+		"frequency":       "1_hourly",
+		"area":            guineaArea,
+	}
+}
+
+// fetch submits a CDS request, waits for it and parses the result. reduce is how
+// daily steps are combined into one grid ("" keeps the first step only).
+func (c *CDSClient) fetch(dataset string, inputs map[string]interface{}, variable string, year, month int, reduce string) (*CDSGridData, error) {
+	body, _ := json.Marshal(map[string]interface{}{"inputs": inputs})
 
 	// Submit request
+	// CDS API v1: POST /api/retrieve/v1/processes/{dataset}/execution
 	url := fmt.Sprintf("%s/retrieve/v1/processes/%s/execution", c.APIURL, dataset)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -68,7 +99,7 @@ func (c *CDSClient) FetchMonthlyData(dataset, variable, productType string, year
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("PRIVATE-TOKEN", c.APIKey)
 
-	log.Printf("Submitting CDS request for %s %d-%02d", variable, year, month)
+	log.Printf("Submitting CDS request %s for %s %d-%02d", dataset, variable, year, month)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -100,7 +131,7 @@ func (c *CDSClient) FetchMonthlyData(dataset, variable, productType string, year
 	}
 
 	// Download the results
-	return c.downloadAndParse(submitResp.JobID, variable, year, month)
+	return c.downloadAndParse(submitResp.JobID, variable, year, month, reduce)
 }
 
 func (c *CDSClient) pollUntilReady(jobID string) error {
@@ -142,7 +173,7 @@ func (c *CDSClient) pollUntilReady(jobID string) error {
 	return fmt.Errorf("CDS job timed out after 20 minutes")
 }
 
-func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int) (*CDSGridData, error) {
+func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int, reduce string) (*CDSGridData, error) {
 	// GET /api/retrieve/v1/jobs/{job_id}/results returns JSON with download link
 	resultsURL := fmt.Sprintf("%s/retrieve/v1/jobs/%s/results", c.APIURL, jobID)
 	req, _ := http.NewRequest("GET", resultsURL, nil)
@@ -167,7 +198,7 @@ func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int) (*
 	}
 	// Try parsing as structured response
 	if err := json.Unmarshal(body, &results); err == nil && results.Asset.Value.Href != "" {
-		return c.downloadFile(results.Asset.Value.Href, variable, year, month)
+		return c.downloadFile(results.Asset.Value.Href, variable, year, month, reduce)
 	}
 
 	// Try as a map with various structures
@@ -175,7 +206,7 @@ func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int) (*
 	if err := json.Unmarshal(body, &resultMap); err == nil {
 		// Look for any href/location/url in the response
 		if href := findDownloadURL(resultMap); href != "" {
-			return c.downloadFile(href, variable, year, month)
+			return c.downloadFile(href, variable, year, month, reduce)
 		}
 	}
 
@@ -200,7 +231,7 @@ func findDownloadURL(m map[string]interface{}) string {
 	return ""
 }
 
-func (c *CDSClient) downloadFile(downloadURL, variable string, year, month int) (*CDSGridData, error) {
+func (c *CDSClient) downloadFile(downloadURL, variable string, year, month int, reduce string) (*CDSGridData, error) {
 	log.Printf("Downloading CDS data from: %s", downloadURL)
 
 	req, _ := http.NewRequest("GET", downloadURL, nil)
@@ -229,11 +260,11 @@ func (c *CDSClient) downloadFile(downloadURL, variable string, year, month int) 
 	gribPath, err := extractGribFromZip(tmpFile.Name())
 	if err != nil {
 		// Not a ZIP, try as raw GRIB
-		return parseNetCDF(tmpFile.Name(), variable, year, month)
+		return parseNetCDF(tmpFile.Name(), variable, year, month, reduce)
 	}
 	defer os.Remove(gribPath)
 
-	return parseNetCDF(gribPath, variable, year, month)
+	return parseNetCDF(gribPath, variable, year, month, reduce)
 }
 
 // extractGribFromZip extracts the first data file from a ZIP archive.

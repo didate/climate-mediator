@@ -27,7 +27,13 @@ Configured via `mapping.json`:
 | `2m_temperature` | Mean air temperature | Kelvin to Celsius |
 | `2m_dewpoint_temperature` | Dewpoint temperature | Kelvin to Celsius |
 | `total_precipitation` | Monthly total precipitation (mm) | mean daily m → monthly mm (× 1000 × days in month) |
+| `2m_temperature` (daily maximum) | Monthly maximum air temperature | Kelvin to Celsius, highest daily maximum of the month |
+| `2m_temperature` (daily minimum) | Monthly minimum air temperature | Kelvin to Celsius, lowest daily minimum of the month |
 | `relative_humidity` (computed) | Relative humidity | Magnus formula from T + Td |
+
+Monthly mean variables come from `reanalysis-era5-land-monthly-means`. Tmax/Tmin come from
+`derived-era5-land-daily-statistics` (one value per day, UTC+0), reduced to the month with
+`monthlyAggregation`. A month is only processed once every day is published.
 
 ## Features
 
@@ -94,6 +100,14 @@ The `mapping.json` file defines which CDS variables map to which DHIS2 data elem
   ]
 }
 ```
+
+Mapping fields for daily statistics datasets:
+
+| Field | Values | Purpose |
+|---|---|---|
+| `name` | e.g. `2m_temperature_max` | Unique identifier when several mappings share a `cdsVariable` (used as the Observation code) |
+| `dailyStatistic` | `daily_mean`, `daily_maximum`, `daily_minimum` | Requests the daily statistics dataset instead of monthly means |
+| `monthlyAggregation` | `max`, `min`, `mean` | How the days are reduced to the month (e.g. `mean` for the mean of daily maxima) |
 
 Available transforms:
 

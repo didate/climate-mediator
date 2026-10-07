@@ -56,7 +56,7 @@ func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		// Collect all variable codes to search (mappings + computed)
 		var varCodes []string
 		for _, m := range mp.Mappings {
-			varCodes = append(varCodes, m.CDSVariable)
+			varCodes = append(varCodes, m.Key())
 		}
 		for _, c := range mp.Computed {
 			varCodes = append(varCodes, c.Name)

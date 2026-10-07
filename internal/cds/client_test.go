@@ -68,3 +68,55 @@ func TestSampleNearestFallback(t *testing.T) {
 		t.Errorf("land cell: got %v ok=%v, want 5", v, ok)
 	}
 }
+
+func TestDailyStatisticsInputs(t *testing.T) {
+	in := dailyStatisticsInputs("2m_temperature", "daily_maximum", 2024, 2)
+	days := in["day"].([]string)
+	if len(days) != 29 || days[0] != "01" || days[28] != "29" {
+		t.Errorf("days = %v, want 01..29 for February 2024", days)
+	}
+	if in["daily_statistic"] != "daily_maximum" || in["month"] != "02" || in["year"] != "2024" || in["time_zone"] != "utc+00:00" {
+		t.Errorf("inputs = %+v", in)
+	}
+	if _, ok := in["product_type"]; ok {
+		t.Error("daily statistics requests take no product_type")
+	}
+}
+
+func TestReduceSteps(t *testing.T) {
+	nan := math.NaN()
+	// 3 days x 3 cells; the last cell is sea (NaN every day)
+	steps := [][]float64{
+		{300, 290, nan},
+		{305, 288, nan},
+		{302, 292, nan},
+	}
+	for how, want := range map[string][]float64{
+		"max":  {305, 292},
+		"min":  {300, 288},
+		"mean": {302.3333333333333, 290},
+	} {
+		got, err := reduceSteps(steps, how)
+		if err != nil {
+			t.Fatalf("%s: %v", how, err)
+		}
+		if math.Abs(got[0]-want[0]) > 1e-9 || math.Abs(got[1]-want[1]) > 1e-9 || !math.IsNaN(got[2]) {
+			t.Errorf("%s = %v, want %v and NaN", how, got, want)
+		}
+	}
+	if _, err := reduceSteps(steps, "sum"); err == nil {
+		t.Error("expected error for unknown aggregation")
+	}
+}
+
+func TestToFloat64Steps(t *testing.T) {
+	steps, err := toFloat64Steps([][][]float32{{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}})
+	if err != nil || len(steps) != 2 || steps[1][3] != 8 || len(steps[0]) != 4 {
+		t.Fatalf("3D: %v %v", steps, err)
+	}
+	// Monthly means without a time dimension: one step
+	steps, err = toFloat64Steps([][]float32{{1, 2}, {3, 4}})
+	if err != nil || len(steps) != 1 || len(steps[0]) != 4 {
+		t.Fatalf("2D: %v %v", steps, err)
+	}
+}
