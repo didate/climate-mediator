@@ -137,7 +137,8 @@ func (c *CDSClient) fetch(dataset string, inputs map[string]interface{}, variabl
 func (c *CDSClient) pollUntilReady(jobID string) error {
 	url := fmt.Sprintf("%s/retrieve/v1/jobs/%s", c.APIURL, jobID)
 
-	for i := 0; i < 120; i++ { // Max 20 minutes
+	// Up to 60 minutes: with parallel requests, jobs can wait in the CDS queue
+	for i := 0; i < 360; i++ {
 		time.Sleep(10 * time.Second)
 
 		req, _ := http.NewRequest("GET", url, nil)
@@ -170,7 +171,7 @@ func (c *CDSClient) pollUntilReady(jobID string) error {
 		// "accepted", "running" → keep polling
 	}
 
-	return fmt.Errorf("CDS job timed out after 20 minutes")
+	return fmt.Errorf("CDS job timed out after 60 minutes")
 }
 
 func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int, reduce string) (*CDSGridData, error) {

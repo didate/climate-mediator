@@ -70,6 +70,7 @@ Key variables:
 | `LOCATION_ID_PREFIX` | HAPI Location IDs are `<prefix>-<orgUnitUID>` so they never collide with other mediators sharing HAPI (default: `entrepot`) |
 | `MAPPING_FILE` | Path to variable mapping JSON (default: `mapping.json`) |
 | `MAX_WORKERS` | Concurrent workers (default: `5`) |
+| `CDS_MAX_PARALLEL` | Maximum number of CDS requests in flight at the same time (default: `4`) |
 | `DEFAULT_MONTHS` | Past months processed when no period param is given (default: `1` = previous month) |
 
 See `.env.sample` for the full list.

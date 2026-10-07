@@ -109,23 +109,19 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		totalSaved := 0
 		totalFailed := 0
 
+		// Download all grids first, several CDS requests at a time
+		log.Printf("Fetching %d CDS grid(s), %d in parallel", len(periods)*len(mp.Mappings), cfg.CDSMaxParallel)
+		fetched := fetchAllGrids(cdsClient, mp.Mappings, periods, cfg.CDSMaxParallel)
+
 		for _, p := range periods {
 			// Store grids for computed variables (e.g., relative humidity)
 			grids := make(map[string]*cds.CDSGridData)
 
 			for mi, m := range mp.Mappings {
-				startCDS := time.Now()
-				var grid *cds.CDSGridData
-				var err error
-				if m.DailyStatistic != "" {
-					grid, err = cdsClient.FetchDailyStatistics(m.CDSDataset, m.Key(), m.DailyStatistic, m.MonthlyAggregation, p.Year, p.Month)
-				} else {
-					grid, err = cdsClient.FetchMonthlyData(m.CDSDataset, m.Key(), m.CDSProductType, p.Year, p.Month)
-				}
-				endCDS := time.Now()
+				r := fetched[gridKey{period: p, key: m.Key()}]
+				grid, err, startCDS, endCDS := r.grid, r.err, r.start, r.end
 
 				if err != nil {
-					log.Printf("CDS fetch failed for %s %s: %v", m.Key(), p, err)
 					orchestrations = append(orchestrations, openhim.Orchestration{
 						Name: fmt.Sprintf("fetch-cds-%s-%s", m.Key(), p),
 						Request: openhim.OHRequest{
@@ -158,7 +154,6 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 					},
 				})
 
-				log.Printf("Downloaded CDS grid for %s %s: %dx%d", m.Key(), p, len(grid.Lats), len(grid.Lons))
 				grids[m.Key()] = grid
 
 				// Extract values for each org unit and save as Observations

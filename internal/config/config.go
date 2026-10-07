@@ -26,6 +26,7 @@ type Config struct {
 	MappingFile        string
 	MaxWorkers       int
 	DefaultMonths    int
+	CDSMaxParallel   int
 }
 
 func LoadConfig() *Config {
@@ -49,6 +50,7 @@ func LoadConfig() *Config {
 		MappingFile:      getEnvDefault("MAPPING_FILE", "mapping.json"),
 		MaxWorkers:       getEnvDefaultInt("MAX_WORKERS", 5),
 		DefaultMonths:    getEnvDefaultInt("DEFAULT_MONTHS", 1),
+		CDSMaxParallel:   getEnvDefaultInt("CDS_MAX_PARALLEL", 4),
 	}
 }
 

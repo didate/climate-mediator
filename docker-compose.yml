@@ -19,6 +19,7 @@ services:
       MAPPING_FILE: /mapping.json
       MAX_WORKERS: ${MAX_WORKERS:-5}
       DEFAULT_MONTHS: ${DEFAULT_MONTHS:-1}
+      CDS_MAX_PARALLEL: ${CDS_MAX_PARALLEL:-4}
       OU_IDENTIFIER_SYSTEM: "urn:dhis2:entrepot:organisationUnits"
       LOCATION_ID_PREFIX: "entrepot"
     networks:
