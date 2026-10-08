@@ -1,3 +1,4 @@
 .env
-climate-mediator
-server
+/climate-mediator
+/server
+data/

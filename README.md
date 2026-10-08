@@ -17,6 +17,7 @@ The mediator exposes 3 async endpoints, each tracked as an OpenHIM transaction:
 | `GET /climate/pull-orgunit` | Fetch org units with coordinates from DHIS2, save as FHIR Locations |
 | `GET /climate/pull-climate?months=3` | Download ERA5-Land data from CDS, save as FHIR Observations |
 | `GET /climate/push-to-dhis2?months=3` | Read Observations from HAPI, push as dataValues to DHIS2 |
+| `GET /climate/status?year=2024` | State of each variable x month (downloaded, saved, failed, pushed) and the latest runs |
 
 ## Climate Variables
 
@@ -72,6 +73,7 @@ Key variables:
 | `MAX_WORKERS` | Concurrent workers (default: `5`) |
 | `CDS_MAX_PARALLEL` | Maximum number of CDS requests in flight at the same time (default: `4`) |
 | `CDS_MAX_PARALLEL_PER_DATASET` | Maximum CDS requests queued at once for one dataset (default: `2`). CDS rejects jobs above its per-dataset queue limit; rejected jobs are retried later |
+| `STATE_DB_PATH` | SQLite file recording runs and the state of each variable x month (default: `data/state.db`; `/data/state.db` on the `climate-state` volume in Docker) |
 | `CDS_JOB_TIMEOUT_MINUTES` | Maximum wait for one CDS job, queue included (default: `120`). Transient failures (5xx, timeout) are retried twice |
 | `DEFAULT_MONTHS` | Past months processed when no period param is given (default: `1` = previous month) |
 

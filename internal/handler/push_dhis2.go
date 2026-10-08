@@ -15,9 +15,10 @@ import (
 	"github.com/didate/climate-mediator/internal/mapping"
 	"github.com/didate/climate-mediator/internal/openhim"
 	"github.com/didate/climate-mediator/internal/period"
+	"github.com/didate/climate-mediator/internal/state"
 )
 
-func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Config, ohc *openhim.OpenHIMClient, mp *mapping.MappingConfigFull) {
+func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Config, ohc *openhim.OpenHIMClient, mp *mapping.MappingConfigFull, st *state.Store) {
 	log.Printf("Received %s %s", r.Method, r.URL.String())
 	transactionID := r.Header.Get("X-OpenHIM-TransactionID")
 
@@ -45,10 +46,15 @@ func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		periods = period.GenerateMonthPeriods(months)
 	}
 
+	params := r.URL.RawQuery
 	openhim.RespondAccepted(w, cfg.MediatorURN, fmt.Sprintf("Push climate data for %d period(s) to DHIS2 started", len(periods)))
 
 	go func() {
 		startTotal := time.Now()
+		runID := st.BeginRun("push-to-dhis2", transactionID, params)
+		// variable/period grids found in HAPI, marked as pushed if the push succeeds
+		type pushedGrid struct{ variable, period string }
+		var found []pushedGrid
 		target := dhis2.NewDHIS2Client(cfg.DHIS2TargetURL, cfg.DHIS2TargetPAT)
 		hapi := fhir.NewHAPIClient(cfg.HAPIFhirURL)
 		var orchestrations []openhim.Orchestration
@@ -98,6 +104,9 @@ func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 				})
 
 				log.Printf("Got %d observations for %s %s", len(obs), varCode, p)
+				if len(obs) > 0 {
+					found = append(found, pushedGrid{variable: varCode, period: p.String()})
+				}
 			}
 		}
 
@@ -112,6 +121,7 @@ func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 				},
 				"orchestrations": orchestrations,
 			})
+			st.FinishRun(runID, "Completed", `{"message":"No observations found to push"}`)
 			return
 		}
 
@@ -233,6 +243,14 @@ func HandlePushToDHIS2(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 			},
 		})
 
+		// Every org unit push carries all variables, so a grid is only fully
+		// pushed when no org unit push failed
+		if pushFail == 0 {
+			for _, g := range found {
+				st.MarkPushed(g.variable, g.period)
+			}
+		}
+		st.FinishRun(runID, status, string(summary))
 		log.Printf("Push to DHIS2 completed in %v", time.Since(startTotal))
 	}()
 }

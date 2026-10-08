@@ -29,6 +29,7 @@ type Config struct {
 	CDSMaxParallel           int
 	CDSMaxParallelPerDataset int
 	CDSJobTimeoutMin         int
+	StateDBPath              string
 }
 
 func LoadConfig() *Config {
@@ -55,6 +56,7 @@ func LoadConfig() *Config {
 		CDSMaxParallel:           getEnvDefaultInt("CDS_MAX_PARALLEL", 4),
 		CDSMaxParallelPerDataset: getEnvDefaultInt("CDS_MAX_PARALLEL_PER_DATASET", 2),
 		CDSJobTimeoutMin:         getEnvDefaultInt("CDS_JOB_TIMEOUT_MINUTES", 120),
+		StateDBPath:              getEnvDefault("STATE_DB_PATH", "data/state.db"),
 	}
 }
 

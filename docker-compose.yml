@@ -22,8 +22,11 @@ services:
       CDS_MAX_PARALLEL: ${CDS_MAX_PARALLEL:-4}
       CDS_MAX_PARALLEL_PER_DATASET: ${CDS_MAX_PARALLEL_PER_DATASET:-2}
       CDS_JOB_TIMEOUT_MINUTES: ${CDS_JOB_TIMEOUT_MINUTES:-120}
+      STATE_DB_PATH: /data/state.db
       OU_IDENTIFIER_SYSTEM: "urn:dhis2:entrepot:organisationUnits"
       LOCATION_ID_PREFIX: "entrepot"
+    volumes:
+      - climate-state:/data
     networks:
       - proxy
       - interop_internal
@@ -35,6 +38,9 @@ services:
       - "traefik.http.routers.climate-mediator.tls=true"
       - "traefik.http.routers.climate-mediator.tls.certresolver=letsencrypt"
       - "traefik.http.services.climate-mediator.loadbalancer.server.port=8002"
+
+volumes:
+  climate-state:
 
 networks:
   proxy:

@@ -9,6 +9,7 @@ import (
 	"github.com/didate/climate-mediator/internal/cds"
 	"github.com/didate/climate-mediator/internal/mapping"
 	"github.com/didate/climate-mediator/internal/period"
+	"github.com/didate/climate-mediator/internal/state"
 )
 
 // gridFetcher is the part of the CDS client used to download grids.
@@ -34,6 +35,7 @@ type gridKey struct {
 type gridResult struct {
 	grid       *cds.CDSGridData
 	err        error
+	attempts   int
 	start, end time.Time
 }
 
@@ -69,6 +71,27 @@ var relativeHumidityInputs = []string{"2m_temperature", "2m_dewpoint_temperature
 // observationCounter counts the Observations already stored for a code and month.
 type observationCounter interface {
 	CountObservations(code string, year, month int) (int, error)
+}
+
+// stateCounter answers from the state database, and falls back to counting in
+// HAPI for grids pulled before the database existed.
+type stateCounter struct {
+	st   *state.Store
+	hapi observationCounter
+}
+
+func (c stateCounter) CountObservations(code string, year, month int) (int, error) {
+	g, ok, err := c.st.GetGrid(code, period.YearMonth{Year: year, Month: month}.String())
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return c.hapi.CountObservations(code, year, month)
+	}
+	if g.Status != state.StatusSaved {
+		return 0, nil
+	}
+	return g.Saved, nil
 }
 
 // missingGridJobs plans a "missing only" run: a mapping or computed variable is
@@ -172,7 +195,7 @@ func fetchAllGrids(c gridFetcher, jobs []gridJob, parallel, perDataset int) map[
 				time.Sleep(delay)
 				grid, err = fetchGrid(c, m, p)
 			}
-			r := gridResult{grid: grid, err: err, start: start, end: time.Now()}
+			r := gridResult{grid: grid, err: err, attempts: 1 + transient + limited, start: start, end: time.Now()}
 			if err != nil {
 				log.Printf("CDS fetch failed for %s %s: %v", m.Key(), p, err)
 			} else {

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/didate/climate-mediator/internal/cds"
@@ -17,9 +18,13 @@ import (
 	"github.com/didate/climate-mediator/internal/mapping"
 	"github.com/didate/climate-mediator/internal/openhim"
 	"github.com/didate/climate-mediator/internal/period"
+	"github.com/didate/climate-mediator/internal/state"
 )
 
-func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Config, ohc *openhim.OpenHIMClient, mp *mapping.MappingConfigFull) {
+// pullRunning prevents concurrent pulls, which would overload the CDS queue and HAPI.
+var pullRunning atomic.Bool
+
+func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Config, ohc *openhim.OpenHIMClient, mp *mapping.MappingConfigFull, st *state.Store) {
 	log.Printf("Received %s %s", r.Method, r.URL.String())
 	transactionID := r.Header.Get("X-OpenHIM-TransactionID")
 
@@ -52,10 +57,18 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 	// e.g. to complete a backfill without downloading everything again
 	missingOnly := r.URL.Query().Get("missingOnly") == "true"
 
+	if !pullRunning.CompareAndSwap(false, true) {
+		openhim.RespondError(w, cfg.MediatorURN, http.StatusConflict, "A pull is already running, wait for it to finish")
+		return
+	}
+	params := r.URL.RawQuery
+
 	openhim.RespondAccepted(w, cfg.MediatorURN, fmt.Sprintf("Pull climate data for %d period(s) started", len(periods)))
 
 	go func() {
+		defer pullRunning.Store(false)
 		startTotal := time.Now()
+		runID := st.BeginRun("pull-climate", transactionID, params)
 		cdsClient := cds.NewCDSClient(cfg.CDSAPIURL, cfg.CDSAPIKey)
 		cdsClient.JobTimeout = time.Duration(cfg.CDSJobTimeoutMin) * time.Minute
 		hapi := fhir.NewHAPIClient(cfg.HAPIFhirURL)
@@ -70,6 +83,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 			log.Printf("Fetch locations error: %v", err)
 			ohc.UpdateTransactionFailed(transactionID, cfg.MediatorURN,
 				fmt.Sprintf("Failed to fetch locations: %v", err))
+			st.FinishRun(runID, "Failed", fmt.Sprintf("Failed to fetch locations: %v", err))
 			return
 		}
 
@@ -121,7 +135,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		jobs := allGridJobs(mp.Mappings, periods)
 		skip := map[gridKey]bool{}
 		if missingOnly {
-			jobs, skip = missingGridJobs(hapi, mp.Mappings, mp.Computed, periods, len(orgUnits))
+			jobs, skip = missingGridJobs(stateCounter{st: st, hapi: hapi}, mp.Mappings, mp.Computed, periods, len(orgUnits))
 			log.Printf("Missing only: %d grid(s) to fetch, %d already complete in HAPI", len(jobs), len(skip))
 		}
 		log.Printf("Fetching %d CDS grid(s), %d in parallel, %d per dataset", len(jobs), cfg.CDSMaxParallel, cfg.CDSMaxParallelPerDataset)
@@ -158,6 +172,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 					})
 					totalFailed += len(orgUnits)
 					failedGrids = append(failedGrids, fmt.Sprintf("%s %s", m.Key(), p))
+					st.MarkGrid(m.Key(), p.String(), m.CDSDataset, state.StatusFailed, r.attempts, err.Error(), 0, len(orgUnits))
 					continue
 				}
 
@@ -177,6 +192,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 				})
 
 				grids[m.Key()] = grid
+				st.MarkGrid(m.Key(), p.String(), m.CDSDataset, state.StatusDownloaded, r.attempts, "", 0, 0)
 
 				// Extract values for each org unit and save as Observations
 				startSave := time.Now()
@@ -278,6 +294,11 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 				})
 
 				log.Printf("Variable %s %s: saved %d, failed %d in %v", m.Key(), p, saved, failed, endSave.Sub(startSave))
+				if saved == 0 {
+					st.MarkGrid(m.Key(), p.String(), m.CDSDataset, state.StatusFailed, r.attempts, "no Observation saved to HAPI", 0, failed)
+				} else {
+					st.MarkGrid(m.Key(), p.String(), m.CDSDataset, state.StatusSaved, r.attempts, "", saved, failed)
+				}
 			}
 
 			// Compute derived variables (e.g., relative humidity)
@@ -292,6 +313,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 						log.Printf("Cannot compute %s %s: missing temperature or dewpoint grid", c.Name, p)
 						totalFailed += len(orgUnits)
 						failedGrids = append(failedGrids, fmt.Sprintf("%s %s", c.Name, p))
+						st.MarkGrid(c.Name, p.String(), "", state.StatusFailed, 0, "missing temperature or dewpoint grid", 0, len(orgUnits))
 						continue
 					}
 
@@ -332,6 +354,11 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 					endSave := time.Now()
 					totalSaved += saved
 					totalFailed += failed
+					if saved == 0 {
+						st.MarkGrid(c.Name, p.String(), "", state.StatusFailed, 0, "no Observation saved to HAPI", 0, failed)
+					} else {
+						st.MarkGrid(c.Name, p.String(), "", state.StatusSaved, 0, "", saved, failed)
+					}
 
 					orchestrations = append(orchestrations, openhim.Orchestration{
 						Name: fmt.Sprintf("compute-%s-%s", c.Name, p),
@@ -396,6 +423,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 			},
 		})
 
+		st.FinishRun(runID, status, string(summary))
 		log.Printf("Pull climate completed in %v", time.Since(startTotal))
 	}()
 }

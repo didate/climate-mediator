@@ -66,11 +66,13 @@ func (c *OpenHIMClient) Register() error {
 			c.channelConfig("Climate Pull OrgUnit Channel", "^/climate/pull-orgunit.*$", "/climate/pull-orgunit"),
 			c.channelConfig("Climate Pull Data Channel", "^/climate/pull-climate.*$", "/climate/pull-climate"),
 			c.channelConfig("Climate Push to DHIS2 Channel", "^/climate/push-to-dhis2.*$", "/climate/push-to-dhis2"),
+			c.channelConfig("Climate Status Channel", "^/climate/status.*$", "/climate/status"),
 		},
 		Endpoints: []Endpoint{
 			{Name: "Climate Pull OrgUnit", Host: "localhost", Port: mustAtoi(c.Cfg.MediatorPort), Path: "/climate/pull-orgunit", Type: "http"},
 			{Name: "Climate Pull Data", Host: "localhost", Port: mustAtoi(c.Cfg.MediatorPort), Path: "/climate/pull-climate", Type: "http"},
 			{Name: "Climate Push DHIS2", Host: "localhost", Port: mustAtoi(c.Cfg.MediatorPort), Path: "/climate/push-to-dhis2", Type: "http"},
+			{Name: "Climate Status", Host: "localhost", Port: mustAtoi(c.Cfg.MediatorPort), Path: "/climate/status", Type: "http"},
 		},
 	}
 
