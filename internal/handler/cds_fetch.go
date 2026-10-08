@@ -21,6 +21,10 @@ type gridFetcher interface {
 // (502 from the CDS gateway, job timeout or failure). Variable for tests.
 var fetchRetryDelays = []time.Duration{1 * time.Minute, 5 * time.Minute}
 
+// queueRetryDelays are the waits after a rejection for the per-dataset queue
+// limit: longer, to let our own queued jobs finish first. Variable for tests.
+var queueRetryDelays = []time.Duration{10 * time.Minute, 10 * time.Minute, 15 * time.Minute, 15 * time.Minute, 20 * time.Minute}
+
 // gridKey identifies one downloaded grid: a mapping (by Key) for a period.
 type gridKey struct {
 	period period.YearMonth
@@ -42,47 +46,143 @@ func fetchGrid(c gridFetcher, m mapping.VariableMapping, p period.YearMonth) (*c
 	return c.FetchMonthlyData(m.CDSDataset, m.CDSVariable, m.CDSProductType, p.Year, p.Month)
 }
 
-// fetchAllGrids downloads every mapping x period grid with at most parallel CDS
-// requests in flight, so CDS queue time overlaps instead of adding up.
-func fetchAllGrids(c gridFetcher, mappings []mapping.VariableMapping, periods []period.YearMonth, parallel int) map[gridKey]gridResult {
+// gridJob is one grid to download: a mapping for a period.
+type gridJob struct {
+	m mapping.VariableMapping
+	p period.YearMonth
+}
+
+// allGridJobs returns every mapping x period grid.
+func allGridJobs(mappings []mapping.VariableMapping, periods []period.YearMonth) []gridJob {
+	jobs := make([]gridJob, 0, len(mappings)*len(periods))
+	for _, p := range periods {
+		for _, m := range mappings {
+			jobs = append(jobs, gridJob{m: m, p: p})
+		}
+	}
+	return jobs
+}
+
+// relativeHumidityInputs are the mapping keys relative humidity is computed from.
+var relativeHumidityInputs = []string{"2m_temperature", "2m_dewpoint_temperature"}
+
+// observationCounter counts the Observations already stored for a code and month.
+type observationCounter interface {
+	CountObservations(code string, year, month int) (int, error)
+}
+
+// missingGridJobs plans a "missing only" run: a mapping or computed variable is
+// complete for a period when HAPI holds exactly one Observation per org unit.
+// It returns the grids to download and the keys to skip. A missing computed
+// variable (relative humidity) also downloads its inputs.
+func missingGridJobs(counter observationCounter, mappings []mapping.VariableMapping, computed []mapping.ComputedMapping, periods []period.YearMonth, orgUnits int) ([]gridJob, map[gridKey]bool) {
+	complete := func(code string, p period.YearMonth) bool {
+		n, err := counter.CountObservations(code, p.Year, p.Month)
+		if err != nil {
+			log.Printf("Count observations for %s %s failed, will re-fetch: %v", code, p, err)
+			return false
+		}
+		return n == orgUnits
+	}
+
+	var jobs []gridJob
+	skip := make(map[gridKey]bool)
+	for _, p := range periods {
+		needed := make(map[string]bool)
+		for _, m := range mappings {
+			if !complete(m.Key(), p) {
+				needed[m.Key()] = true
+			}
+		}
+		for _, c := range computed {
+			if complete(c.Name, p) {
+				skip[gridKey{period: p, key: c.Name}] = true
+				continue
+			}
+			if c.Compute == "relative_humidity" {
+				for _, k := range relativeHumidityInputs {
+					needed[k] = true
+				}
+			}
+		}
+		for _, m := range mappings {
+			if needed[m.Key()] {
+				jobs = append(jobs, gridJob{m: m, p: p})
+			} else {
+				skip[gridKey{period: p, key: m.Key()}] = true
+			}
+		}
+	}
+	return jobs, skip
+}
+
+// fetchAllGrids downloads the grids with at most parallel CDS requests in
+// flight overall and at most perDataset per CDS dataset: CDS rejects jobs when
+// an account queues too many requests for one dataset, while different
+// datasets queue separately.
+func fetchAllGrids(c gridFetcher, jobs []gridJob, parallel, perDataset int) map[gridKey]gridResult {
 	if parallel < 1 {
 		parallel = 1
 	}
-	results := make(map[gridKey]gridResult, len(mappings)*len(periods))
+	if perDataset < 1 {
+		perDataset = 1
+	}
+	results := make(map[gridKey]gridResult, len(jobs))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, parallel)
+	datasetSems := make(map[string]chan struct{})
+	for _, j := range jobs {
+		if datasetSems[j.m.CDSDataset] == nil {
+			datasetSems[j.m.CDSDataset] = make(chan struct{}, perDataset)
+		}
+	}
 
-	for _, p := range periods {
-		for _, m := range mappings {
-			wg.Add(1)
-			go func(m mapping.VariableMapping, p period.YearMonth) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(m mapping.VariableMapping, p period.YearMonth) {
+			defer wg.Done()
+			// Dataset slot first, so a job waiting for its dataset never holds
+			// a global slot another dataset could use
+			dsem := datasetSems[m.CDSDataset]
+			dsem <- struct{}{}
+			defer func() { <-dsem }()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-				start := time.Now()
-				grid, err := fetchGrid(c, m, p)
-				for attempt, delay := range fetchRetryDelays {
-					if err == nil || errors.Is(err, cds.ErrPermanent) {
+			start := time.Now()
+			grid, err := fetchGrid(c, m, p)
+			transient, limited := 0, 0
+			for err != nil && !errors.Is(err, cds.ErrPermanent) {
+				var delay time.Duration
+				if errors.Is(err, cds.ErrQueueLimited) {
+					if limited == len(queueRetryDelays) {
 						break
 					}
-					log.Printf("CDS fetch for %s %s failed (attempt %d/%d), retrying in %v: %v", m.Key(), p, attempt+1, len(fetchRetryDelays)+1, delay, err)
-					time.Sleep(delay)
-					grid, err = fetchGrid(c, m, p)
-				}
-				r := gridResult{grid: grid, err: err, start: start, end: time.Now()}
-				if err != nil {
-					log.Printf("CDS fetch failed for %s %s: %v", m.Key(), p, err)
+					delay = queueRetryDelays[limited]
+					limited++
 				} else {
-					log.Printf("Downloaded CDS grid for %s %s: %dx%d in %v", m.Key(), p, len(grid.Lats), len(grid.Lons), r.end.Sub(start))
+					if transient == len(fetchRetryDelays) {
+						break
+					}
+					delay = fetchRetryDelays[transient]
+					transient++
 				}
+				log.Printf("CDS fetch for %s %s failed, retrying in %v: %v", m.Key(), p, delay, err)
+				time.Sleep(delay)
+				grid, err = fetchGrid(c, m, p)
+			}
+			r := gridResult{grid: grid, err: err, start: start, end: time.Now()}
+			if err != nil {
+				log.Printf("CDS fetch failed for %s %s: %v", m.Key(), p, err)
+			} else {
+				log.Printf("Downloaded CDS grid for %s %s: %dx%d in %v", m.Key(), p, len(grid.Lats), len(grid.Lons), r.end.Sub(start))
+			}
 
-				mu.Lock()
-				results[gridKey{period: p, key: m.Key()}] = r
-				mu.Unlock()
-			}(m, p)
-		}
+			mu.Lock()
+			results[gridKey{period: p, key: m.Key()}] = r
+			mu.Unlock()
+		}(j.m, j.p)
 	}
 	wg.Wait()
 	return results

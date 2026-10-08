@@ -71,6 +71,7 @@ Key variables:
 | `MAPPING_FILE` | Path to variable mapping JSON (default: `mapping.json`) |
 | `MAX_WORKERS` | Concurrent workers (default: `5`) |
 | `CDS_MAX_PARALLEL` | Maximum number of CDS requests in flight at the same time (default: `4`) |
+| `CDS_MAX_PARALLEL_PER_DATASET` | Maximum CDS requests queued at once for one dataset (default: `2`). CDS rejects jobs above its per-dataset queue limit; rejected jobs are retried later |
 | `CDS_JOB_TIMEOUT_MINUTES` | Maximum wait for one CDS job, queue included (default: `120`). Transient failures (5xx, timeout) are retried twice |
 | `DEFAULT_MONTHS` | Past months processed when no period param is given (default: `1` = previous month) |
 
@@ -144,6 +145,9 @@ curl "http://localhost:8002/climate/pull-climate"
 
 # Step 3: Push to DHIS2
 curl "http://localhost:8002/climate/push-to-dhis2"
+
+# Complete a backfill: only fetch grids not already all in HAPI
+curl "http://localhost:8002/climate/pull-climate?months=45&missingOnly=true"
 
 # Or for a specific month
 curl "http://localhost:8002/climate/pull-climate?year=2026&month=5"

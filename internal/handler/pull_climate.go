@@ -48,6 +48,10 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		periods = period.GenerateMonthPeriods(months)
 	}
 
+	// missingOnly=true skips grids whose Observations are already all in HAPI,
+	// e.g. to complete a backfill without downloading everything again
+	missingOnly := r.URL.Query().Get("missingOnly") == "true"
+
 	openhim.RespondAccepted(w, cfg.MediatorURN, fmt.Sprintf("Pull climate data for %d period(s) started", len(periods)))
 
 	go func() {
@@ -113,16 +117,28 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		// partial run is visible and the missing months can be re-run
 		var failedGrids []string
 
-		// Download all grids first, several CDS requests at a time
-		log.Printf("Fetching %d CDS grid(s), %d in parallel", len(periods)*len(mp.Mappings), cfg.CDSMaxParallel)
-		fetched := fetchAllGrids(cdsClient, mp.Mappings, periods, cfg.CDSMaxParallel)
+		// Plan the grids to download, then download them all first, several CDS requests at a time
+		jobs := allGridJobs(mp.Mappings, periods)
+		skip := map[gridKey]bool{}
+		if missingOnly {
+			jobs, skip = missingGridJobs(hapi, mp.Mappings, mp.Computed, periods, len(orgUnits))
+			log.Printf("Missing only: %d grid(s) to fetch, %d already complete in HAPI", len(jobs), len(skip))
+		}
+		log.Printf("Fetching %d CDS grid(s), %d in parallel, %d per dataset", len(jobs), cfg.CDSMaxParallel, cfg.CDSMaxParallelPerDataset)
+		fetched := fetchAllGrids(cdsClient, jobs, cfg.CDSMaxParallel, cfg.CDSMaxParallelPerDataset)
 
 		for _, p := range periods {
 			// Store grids for computed variables (e.g., relative humidity)
 			grids := make(map[string]*cds.CDSGridData)
 
 			for mi, m := range mp.Mappings {
-				r := fetched[gridKey{period: p, key: m.Key()}]
+				if skip[gridKey{period: p, key: m.Key()}] {
+					continue
+				}
+				r, ok := fetched[gridKey{period: p, key: m.Key()}]
+				if !ok {
+					r = gridResult{err: fmt.Errorf("grid was not fetched")}
+				}
 				grid, err, startCDS, endCDS := r.grid, r.err, r.start, r.end
 
 				if err != nil {
@@ -266,9 +282,12 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 
 			// Compute derived variables (e.g., relative humidity)
 			for _, c := range mp.Computed {
+				if skip[gridKey{period: p, key: c.Name}] {
+					continue
+				}
 				if c.Compute == "relative_humidity" {
-					tempGrid := grids["2m_temperature"]
-					dewGrid := grids["2m_dewpoint_temperature"]
+					tempGrid := grids[relativeHumidityInputs[0]]
+					dewGrid := grids[relativeHumidityInputs[1]]
 					if tempGrid == nil || dewGrid == nil {
 						log.Printf("Cannot compute %s %s: missing temperature or dewpoint grid", c.Name, p)
 						totalFailed += len(orgUnits)
@@ -348,13 +367,15 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		}
 
 		summary, _ := json.MarshalIndent(map[string]interface{}{
-			"periods":     periodStrs,
-			"orgUnits":    len(orgUnits),
-			"variables":   len(mp.Mappings),
-			"totalSaved":  totalSaved,
-			"totalFailed": totalFailed,
-			"failedGrids": failedGrids,
-			"duration":    time.Since(startTotal).String(),
+			"periods":      periodStrs,
+			"orgUnits":     len(orgUnits),
+			"variables":    len(mp.Mappings),
+			"totalSaved":   totalSaved,
+			"totalFailed":  totalFailed,
+			"failedGrids":  failedGrids,
+			"missingOnly":  missingOnly,
+			"skippedGrids": len(skip),
+			"duration":     time.Since(startTotal).String(),
 		}, "", "  ")
 		if len(failedGrids) > 0 {
 			log.Printf("Pull climate: %d grid(s) failed, re-run these months: %s", len(failedGrids), strings.Join(failedGrids, ", "))

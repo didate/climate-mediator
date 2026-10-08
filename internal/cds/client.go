@@ -21,12 +21,19 @@ type CDSClient struct {
 	APIKey string
 	// JobTimeout is how long to wait for a submitted job (queue + processing).
 	JobTimeout time.Duration
-	http       *http.Client
+	// PollInterval is the wait between two job status checks.
+	PollInterval time.Duration
+	http         *http.Client
 }
 
 // ErrPermanent marks errors that retrying will not fix (rejected request,
 // month not fully published yet). Other errors (5xx, timeouts) are transient.
 var ErrPermanent = errors.New("permanent CDS error")
+
+// ErrQueueLimited marks jobs rejected because the account has too many queued
+// requests for the dataset ("Number queued requests for this dataset is
+// temporarily limited"). Retry after the queue has drained.
+var ErrQueueLimited = errors.New("CDS queue limit reached")
 
 // CDSGridData holds the downloaded and parsed climate grid data.
 type CDSGridData struct {
@@ -40,10 +47,11 @@ type CDSGridData struct {
 
 func NewCDSClient(apiURL, apiKey string) *CDSClient {
 	return &CDSClient{
-		APIURL:     apiURL,
-		APIKey:     apiKey,
-		JobTimeout: 2 * time.Hour,
-		http:       &http.Client{Timeout: 300 * time.Second},
+		APIURL:       apiURL,
+		APIKey:       apiKey,
+		JobTimeout:   2 * time.Hour,
+		PollInterval: 10 * time.Second,
+		http:         &http.Client{Timeout: 300 * time.Second},
 	}
 }
 
@@ -151,7 +159,7 @@ func (c *CDSClient) pollUntilReady(jobID string) error {
 	// With parallel requests, jobs can wait a long time in the CDS queue
 	deadline := time.Now().Add(c.JobTimeout)
 	for i := 0; time.Now().Before(deadline); i++ {
-		time.Sleep(10 * time.Second)
+		time.Sleep(c.PollInterval)
 
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("PRIVATE-TOKEN", c.APIKey)
@@ -178,14 +186,68 @@ func (c *CDSClient) pollUntilReady(jobID string) error {
 		case "successful":
 			return nil
 		case "rejected":
-			return fmt.Errorf("%w: CDS job rejected: %s", ErrPermanent, string(body))
+			reason := c.jobErrorReason(jobID)
+			if isQueueLimit(reason) {
+				return fmt.Errorf("%w: CDS job %s rejected: %s", ErrQueueLimited, jobID, reason)
+			}
+			return fmt.Errorf("%w: CDS job %s rejected: %s", ErrPermanent, jobID, reason)
 		case "failed", "dismissed":
-			return fmt.Errorf("CDS job failed: %s", string(body))
+			return fmt.Errorf("CDS job %s %s: %s", jobID, status.Status, c.jobErrorReason(jobID))
 		}
 		// "accepted", "running" → keep polling
 	}
 
+	// Abandoned jobs still count against the account's queue limit, so delete it
+	c.deleteJob(jobID)
 	return fmt.Errorf("CDS job %s timed out after %v", jobID, c.JobTimeout)
+}
+
+// jobErrorReason returns why a job was rejected or failed. The job status does
+// not say; the results endpoint returns a problem document with the reason.
+func (c *CDSClient) jobErrorReason(jobID string) string {
+	url := fmt.Sprintf("%s/retrieve/v1/jobs/%s/results", c.APIURL, jobID)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("PRIVATE-TOKEN", c.APIKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Sprintf("reason unavailable: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var problem struct {
+		Title     string `json:"title"`
+		Detail    string `json:"detail"`
+		Traceback string `json:"traceback"`
+	}
+	if json.Unmarshal(body, &problem) != nil {
+		return string(body)
+	}
+	for _, s := range []string{problem.Traceback, problem.Detail, problem.Title} {
+		if s = strings.TrimSpace(s); s != "" {
+			return s
+		}
+	}
+	return string(body)
+}
+
+func isQueueLimit(reason string) bool {
+	r := strings.ToLower(reason)
+	return strings.Contains(r, "temporarily limited") || strings.Contains(r, "queued requests")
+}
+
+// deleteJob removes a job from the CDS queue (best effort).
+func (c *CDSClient) deleteJob(jobID string) {
+	url := fmt.Sprintf("%s/retrieve/v1/jobs/%s", c.APIURL, jobID)
+	req, _ := http.NewRequest("DELETE", url, nil)
+	req.Header.Set("PRIVATE-TOKEN", c.APIKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		log.Printf("Could not delete CDS job %s: %v", jobID, err)
+		return
+	}
+	resp.Body.Close()
+	log.Printf("Deleted abandoned CDS job %s (status %d)", jobID, resp.StatusCode)
 }
 
 func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int, reduce string) (*CDSGridData, error) {

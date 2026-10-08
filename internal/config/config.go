@@ -8,51 +8,53 @@ import (
 )
 
 type Config struct {
-	OpenHIMAPIURL    string
-	OpenHIMUser      string
-	OpenHIMPassword  string
-	OpenHIMTrustSelf bool
-	MediatorPort     string
-	MediatorURN      string
-	MediatorHost     string
-	MediatorScheme   string
-	DHIS2TargetURL   string
-	DHIS2TargetPAT   string
-	CDSAPIKey        string
-	CDSAPIURL        string
-	HAPIFhirURL        string
-	OUIdentifierSystem string
-	LocationIDPrefix   string
-	MappingFile        string
-	MaxWorkers       int
-	DefaultMonths    int
-	CDSMaxParallel   int
-	CDSJobTimeoutMin int
+	OpenHIMAPIURL            string
+	OpenHIMUser              string
+	OpenHIMPassword          string
+	OpenHIMTrustSelf         bool
+	MediatorPort             string
+	MediatorURN              string
+	MediatorHost             string
+	MediatorScheme           string
+	DHIS2TargetURL           string
+	DHIS2TargetPAT           string
+	CDSAPIKey                string
+	CDSAPIURL                string
+	HAPIFhirURL              string
+	OUIdentifierSystem       string
+	LocationIDPrefix         string
+	MappingFile              string
+	MaxWorkers               int
+	DefaultMonths            int
+	CDSMaxParallel           int
+	CDSMaxParallelPerDataset int
+	CDSJobTimeoutMin         int
 }
 
 func LoadConfig() *Config {
 	_ = godotenv.Load()
 	return &Config{
-		OpenHIMAPIURL:    os.Getenv("OPENHIM_API_URL"),
-		OpenHIMUser:      os.Getenv("OPENHIM_API_USER"),
-		OpenHIMPassword:  os.Getenv("OPENHIM_API_PASSWORD"),
-		OpenHIMTrustSelf: os.Getenv("OPENHIM_TRUST_SELF_SIGNED") == "true",
-		MediatorPort:     getEnvDefault("MEDIATOR_PORT", "8002"),
-		MediatorURN:      getEnvDefault("MEDIATOR_URN", "urn:mediator:climate-sync"),
-		MediatorHost:     getEnvDefault("MEDIATOR_HOST", "localhost"),
-		MediatorScheme:   getEnvDefault("MEDIATOR_SCHEME", "http"),
-		DHIS2TargetURL:   os.Getenv("DHIS2_TARGET_URL"),
-		DHIS2TargetPAT:   os.Getenv("DHIS2_TARGET_PAT"),
-		CDSAPIKey:        os.Getenv("CDS_API_KEY"),
-		CDSAPIURL:        getEnvDefault("CDS_API_URL", "https://cds.climate.copernicus.eu/api"),
-		HAPIFhirURL:        os.Getenv("HAPI_FHIR_URL"),
-		OUIdentifierSystem: getEnvDefault("OU_IDENTIFIER_SYSTEM", "urn:dhis2:entrepot:organisationUnits"),
-		LocationIDPrefix:   getEnvDefault("LOCATION_ID_PREFIX", "entrepot"),
-		MappingFile:      getEnvDefault("MAPPING_FILE", "mapping.json"),
-		MaxWorkers:       getEnvDefaultInt("MAX_WORKERS", 5),
-		DefaultMonths:    getEnvDefaultInt("DEFAULT_MONTHS", 1),
-		CDSMaxParallel:   getEnvDefaultInt("CDS_MAX_PARALLEL", 4),
-		CDSJobTimeoutMin: getEnvDefaultInt("CDS_JOB_TIMEOUT_MINUTES", 120),
+		OpenHIMAPIURL:            os.Getenv("OPENHIM_API_URL"),
+		OpenHIMUser:              os.Getenv("OPENHIM_API_USER"),
+		OpenHIMPassword:          os.Getenv("OPENHIM_API_PASSWORD"),
+		OpenHIMTrustSelf:         os.Getenv("OPENHIM_TRUST_SELF_SIGNED") == "true",
+		MediatorPort:             getEnvDefault("MEDIATOR_PORT", "8002"),
+		MediatorURN:              getEnvDefault("MEDIATOR_URN", "urn:mediator:climate-sync"),
+		MediatorHost:             getEnvDefault("MEDIATOR_HOST", "localhost"),
+		MediatorScheme:           getEnvDefault("MEDIATOR_SCHEME", "http"),
+		DHIS2TargetURL:           os.Getenv("DHIS2_TARGET_URL"),
+		DHIS2TargetPAT:           os.Getenv("DHIS2_TARGET_PAT"),
+		CDSAPIKey:                os.Getenv("CDS_API_KEY"),
+		CDSAPIURL:                getEnvDefault("CDS_API_URL", "https://cds.climate.copernicus.eu/api"),
+		HAPIFhirURL:              os.Getenv("HAPI_FHIR_URL"),
+		OUIdentifierSystem:       getEnvDefault("OU_IDENTIFIER_SYSTEM", "urn:dhis2:entrepot:organisationUnits"),
+		LocationIDPrefix:         getEnvDefault("LOCATION_ID_PREFIX", "entrepot"),
+		MappingFile:              getEnvDefault("MAPPING_FILE", "mapping.json"),
+		MaxWorkers:               getEnvDefaultInt("MAX_WORKERS", 5),
+		DefaultMonths:            getEnvDefaultInt("DEFAULT_MONTHS", 1),
+		CDSMaxParallel:           getEnvDefaultInt("CDS_MAX_PARALLEL", 4),
+		CDSMaxParallelPerDataset: getEnvDefaultInt("CDS_MAX_PARALLEL_PER_DATASET", 2),
+		CDSJobTimeoutMin:         getEnvDefaultInt("CDS_JOB_TIMEOUT_MINUTES", 120),
 	}
 }
 

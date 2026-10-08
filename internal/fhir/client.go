@@ -131,6 +131,21 @@ func (c *HAPIClient) GetObservations(code, date string) ([]FHIRObservation, erro
 	return observations, nil
 }
 
+// CountObservations returns how many Observations with this code cover the month.
+// "sa" (starts after the previous day) and "lt" (before the 1st of next month)
+// select exactly that month, including Observations whose period was written
+// as ending on the 1st of the next month.
+func (c *HAPIClient) CountObservations(code string, year, month int) (int, error) {
+	first := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	url := fmt.Sprintf("%s/Observation?code=%s|%s&date=sa%s&date=lt%s&_summary=count",
+		c.BaseURL, CdsSystem, code, first.AddDate(0, 0, -1).Format("2006-01-02"), first.AddDate(0, 1, 0).Format("2006-01-02"))
+	bundle, err := c.fetchBundle(url)
+	if err != nil {
+		return 0, err
+	}
+	return bundle.Total, nil
+}
+
 func (c *HAPIClient) fetchBundle(url string) (*FHIRBundle, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

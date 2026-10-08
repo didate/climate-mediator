@@ -5,7 +5,9 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestTransformValue(t *testing.T) {
@@ -138,5 +140,63 @@ func TestFetchSubmitErrorClassification(t *testing.T) {
 		if errors.Is(err, ErrPermanent) != permanent {
 			t.Errorf("%d: permanent = %v, want %v (%v)", code, !permanent, permanent, err)
 		}
+	}
+}
+
+// fakeCDS answers submit with a job, then the job status, and the results
+// problem document with traceback when the job is rejected.
+func fakeCDS(t *testing.T, status, traceback string) (*httptest.Server, *[]string) {
+	var deleted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST":
+			w.Write([]byte(`{"jobID":"job1","status":"accepted"}`))
+		case r.Method == "DELETE":
+			deleted = append(deleted, r.URL.Path)
+		case strings.HasSuffix(r.URL.Path, "/results"):
+			w.WriteHeader(400)
+			w.Write([]byte(`{"title":"The job has been rejected","traceback":"` + traceback + `"}`))
+		default:
+			w.Write([]byte(`{"jobID":"job1","status":"` + status + `"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &deleted
+}
+
+func TestFetchRejectedClassification(t *testing.T) {
+	tests := []struct {
+		traceback string
+		want      error
+	}{
+		{"Number queued requests for this dataset is temporarily limited. Please configure your scripts accordingly ", ErrQueueLimited},
+		{"Request too large", ErrPermanent},
+	}
+	for _, tt := range tests {
+		srv, _ := fakeCDS(t, "rejected", tt.traceback)
+		c := NewCDSClient(srv.URL, "key")
+		c.PollInterval = time.Millisecond
+		_, err := c.FetchMonthlyData("reanalysis-era5-land-monthly-means", "2m_temperature", "monthly_averaged_reanalysis", 2024, 5)
+		if !errors.Is(err, tt.want) {
+			t.Errorf("%q: got %v, want %v", tt.traceback, err, tt.want)
+		}
+		if err == nil || !strings.Contains(err.Error(), strings.TrimSpace(tt.traceback)) {
+			t.Errorf("error should include the CDS reason, got %v", err)
+		}
+	}
+}
+
+func TestFetchTimeoutDeletesJob(t *testing.T) {
+	srv, deleted := fakeCDS(t, "accepted", "")
+	c := NewCDSClient(srv.URL, "key")
+	c.PollInterval = time.Millisecond
+	c.JobTimeout = 20 * time.Millisecond
+
+	_, err := c.FetchMonthlyData("reanalysis-era5-land-monthly-means", "2m_temperature", "monthly_averaged_reanalysis", 2024, 5)
+	if err == nil || errors.Is(err, ErrPermanent) {
+		t.Fatalf("timeout should be a transient error, got %v", err)
+	}
+	if len(*deleted) != 1 || !strings.HasSuffix((*deleted)[0], "/jobs/job1") {
+		t.Errorf("abandoned job not deleted: %v", *deleted)
 	}
 }
