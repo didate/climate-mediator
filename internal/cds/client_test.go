@@ -1,7 +1,10 @@
 package cds
 
 import (
+	"errors"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -118,5 +121,22 @@ func TestToFloat64Steps(t *testing.T) {
 	steps, err = toFloat64Steps([][]float32{{1, 2}, {3, 4}})
 	if err != nil || len(steps) != 1 || len(steps[0]) != 4 {
 		t.Fatalf("2D: %v %v", steps, err)
+	}
+}
+
+func TestFetchSubmitErrorClassification(t *testing.T) {
+	for code, permanent := range map[int]bool{400: true, 403: true, 502: false, 503: false} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+		}))
+		c := NewCDSClient(srv.URL, "key")
+		_, err := c.FetchMonthlyData("reanalysis-era5-land-monthly-means", "2m_temperature", "monthly_averaged_reanalysis", 2023, 8)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%d: expected an error", code)
+		}
+		if errors.Is(err, ErrPermanent) != permanent {
+			t.Errorf("%d: permanent = %v, want %v (%v)", code, !permanent, permanent, err)
+		}
 	}
 }

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -15,6 +16,10 @@ type gridFetcher interface {
 	FetchMonthlyData(dataset, variable, productType string, year, month int) (*cds.CDSGridData, error)
 	FetchDailyStatistics(dataset, variable, statistic, monthlyAggregation string, year, month int) (*cds.CDSGridData, error)
 }
+
+// fetchRetryDelays are the waits before each retry of a transient CDS failure
+// (502 from the CDS gateway, job timeout or failure). Variable for tests.
+var fetchRetryDelays = []time.Duration{1 * time.Minute, 5 * time.Minute}
 
 // gridKey identifies one downloaded grid: a mapping (by Key) for a period.
 type gridKey struct {
@@ -58,6 +63,14 @@ func fetchAllGrids(c gridFetcher, mappings []mapping.VariableMapping, periods []
 
 				start := time.Now()
 				grid, err := fetchGrid(c, m, p)
+				for attempt, delay := range fetchRetryDelays {
+					if err == nil || errors.Is(err, cds.ErrPermanent) {
+						break
+					}
+					log.Printf("CDS fetch for %s %s failed (attempt %d/%d), retrying in %v: %v", m.Key(), p, attempt+1, len(fetchRetryDelays)+1, delay, err)
+					time.Sleep(delay)
+					grid, err = fetchGrid(c, m, p)
+				}
 				r := gridResult{grid: grid, err: err, start: start, end: time.Now()}
 				if err != nil {
 					log.Printf("CDS fetch failed for %s %s: %v", m.Key(), p, err)

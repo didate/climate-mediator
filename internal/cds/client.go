@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,8 +19,14 @@ import (
 type CDSClient struct {
 	APIURL string
 	APIKey string
-	http   *http.Client
+	// JobTimeout is how long to wait for a submitted job (queue + processing).
+	JobTimeout time.Duration
+	http       *http.Client
 }
+
+// ErrPermanent marks errors that retrying will not fix (rejected request,
+// month not fully published yet). Other errors (5xx, timeouts) are transient.
+var ErrPermanent = errors.New("permanent CDS error")
 
 // CDSGridData holds the downloaded and parsed climate grid data.
 type CDSGridData struct {
@@ -33,9 +40,10 @@ type CDSGridData struct {
 
 func NewCDSClient(apiURL, apiKey string) *CDSClient {
 	return &CDSClient{
-		APIURL: apiURL,
-		APIKey: apiKey,
-		http:   &http.Client{Timeout: 300 * time.Second},
+		APIURL:     apiURL,
+		APIKey:     apiKey,
+		JobTimeout: 2 * time.Hour,
+		http:       &http.Client{Timeout: 300 * time.Second},
 	}
 }
 
@@ -109,8 +117,11 @@ func (c *CDSClient) fetch(dataset string, inputs map[string]interface{}, variabl
 
 	respBody, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode >= 500 {
 		return nil, fmt.Errorf("CDS API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("%w: CDS API returned %d: %s", ErrPermanent, resp.StatusCode, string(respBody))
 	}
 
 	// Parse response to get job ID
@@ -137,8 +148,9 @@ func (c *CDSClient) fetch(dataset string, inputs map[string]interface{}, variabl
 func (c *CDSClient) pollUntilReady(jobID string) error {
 	url := fmt.Sprintf("%s/retrieve/v1/jobs/%s", c.APIURL, jobID)
 
-	// Up to 60 minutes: with parallel requests, jobs can wait in the CDS queue
-	for i := 0; i < 360; i++ {
+	// With parallel requests, jobs can wait a long time in the CDS queue
+	deadline := time.Now().Add(c.JobTimeout)
+	for i := 0; time.Now().Before(deadline); i++ {
 		time.Sleep(10 * time.Second)
 
 		req, _ := http.NewRequest("GET", url, nil)
@@ -165,13 +177,15 @@ func (c *CDSClient) pollUntilReady(jobID string) error {
 		switch status.Status {
 		case "successful":
 			return nil
-		case "failed", "rejected", "dismissed":
+		case "rejected":
+			return fmt.Errorf("%w: CDS job rejected: %s", ErrPermanent, string(body))
+		case "failed", "dismissed":
 			return fmt.Errorf("CDS job failed: %s", string(body))
 		}
 		// "accepted", "running" → keep polling
 	}
 
-	return fmt.Errorf("CDS job timed out after 60 minutes")
+	return fmt.Errorf("CDS job %s timed out after %v", jobID, c.JobTimeout)
 }
 
 func (c *CDSClient) downloadAndParse(jobID, variable string, year, month int, reduce string) (*CDSGridData, error) {

@@ -27,6 +27,7 @@ type Config struct {
 	MaxWorkers       int
 	DefaultMonths    int
 	CDSMaxParallel   int
+	CDSJobTimeoutMin int
 }
 
 func LoadConfig() *Config {
@@ -51,6 +52,7 @@ func LoadConfig() *Config {
 		MaxWorkers:       getEnvDefaultInt("MAX_WORKERS", 5),
 		DefaultMonths:    getEnvDefaultInt("DEFAULT_MONTHS", 1),
 		CDSMaxParallel:   getEnvDefaultInt("CDS_MAX_PARALLEL", 4),
+		CDSJobTimeoutMin: getEnvDefaultInt("CDS_JOB_TIMEOUT_MINUTES", 120),
 	}
 }
 

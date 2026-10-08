@@ -53,6 +53,7 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 	go func() {
 		startTotal := time.Now()
 		cdsClient := cds.NewCDSClient(cfg.CDSAPIURL, cfg.CDSAPIKey)
+		cdsClient.JobTimeout = time.Duration(cfg.CDSJobTimeoutMin) * time.Minute
 		hapi := fhir.NewHAPIClient(cfg.HAPIFhirURL)
 		var orchestrations []openhim.Orchestration
 
@@ -108,6 +109,9 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		// For each period x variable, download CDS data and extract values
 		totalSaved := 0
 		totalFailed := 0
+		// "<variable> <period>" of each grid that could not be produced, so a
+		// partial run is visible and the missing months can be re-run
+		var failedGrids []string
 
 		// Download all grids first, several CDS requests at a time
 		log.Printf("Fetching %d CDS grid(s), %d in parallel", len(periods)*len(mp.Mappings), cfg.CDSMaxParallel)
@@ -136,6 +140,8 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 							Timestamp: endCDS,
 						},
 					})
+					totalFailed += len(orgUnits)
+					failedGrids = append(failedGrids, fmt.Sprintf("%s %s", m.Key(), p))
 					continue
 				}
 
@@ -264,7 +270,9 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 					tempGrid := grids["2m_temperature"]
 					dewGrid := grids["2m_dewpoint_temperature"]
 					if tempGrid == nil || dewGrid == nil {
-						log.Printf("Cannot compute %s: missing temperature or dewpoint grid", c.Name)
+						log.Printf("Cannot compute %s %s: missing temperature or dewpoint grid", c.Name, p)
+						totalFailed += len(orgUnits)
+						failedGrids = append(failedGrids, fmt.Sprintf("%s %s", c.Name, p))
 						continue
 					}
 
@@ -345,8 +353,12 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 			"variables":   len(mp.Mappings),
 			"totalSaved":  totalSaved,
 			"totalFailed": totalFailed,
+			"failedGrids": failedGrids,
 			"duration":    time.Since(startTotal).String(),
 		}, "", "  ")
+		if len(failedGrids) > 0 {
+			log.Printf("Pull climate: %d grid(s) failed, re-run these months: %s", len(failedGrids), strings.Join(failedGrids, ", "))
+		}
 
 		ohc.UpdateTransaction(transactionID, map[string]interface{}{
 			"status": status,

@@ -49,7 +49,7 @@ func parseNetCDF(path, variable string, year, month int, reduce string) (*CDSGri
 	if reduce != "" {
 		// A partially published month must not be pushed as if it were complete
 		if want := daysInMonth(year, month); len(steps) != want {
-			return nil, fmt.Errorf("%s %d-%02d: expected %d daily steps, got %d (month not fully published yet?)", variable, year, month, want, len(steps))
+			return nil, fmt.Errorf("%w: %s %d-%02d: expected %d daily steps, got %d (month not fully published yet?)", ErrPermanent, variable, year, month, want, len(steps))
 		}
 		if dataVals, err = reduceSteps(steps, reduce); err != nil {
 			return nil, err

@@ -71,6 +71,7 @@ Key variables:
 | `MAPPING_FILE` | Path to variable mapping JSON (default: `mapping.json`) |
 | `MAX_WORKERS` | Concurrent workers (default: `5`) |
 | `CDS_MAX_PARALLEL` | Maximum number of CDS requests in flight at the same time (default: `4`) |
+| `CDS_JOB_TIMEOUT_MINUTES` | Maximum wait for one CDS job, queue included (default: `120`). Transient failures (5xx, timeout) are retried twice |
 | `DEFAULT_MONTHS` | Past months processed when no period param is given (default: `1` = previous month) |
 
 See `.env.sample` for the full list.

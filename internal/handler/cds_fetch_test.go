@@ -2,6 +2,8 @@ package handler
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -47,6 +49,11 @@ func (f *fakeFetcher) FetchDailyStatistics(dataset, variable, statistic, agg str
 	return &cds.CDSGridData{Variable: variable, Year: year, Month: month}, nil
 }
 
+func TestMain(m *testing.M) {
+	fetchRetryDelays = []time.Duration{0, 0} // no waiting between retries in tests
+	os.Exit(m.Run())
+}
+
 func TestFetchAllGrids(t *testing.T) {
 	mappings := []mapping.VariableMapping{
 		{CDSVariable: "2m_temperature"},
@@ -82,5 +89,48 @@ func TestFetchAllGrids(t *testing.T) {
 	// A failed variable does not prevent the others
 	if r := results[gridKey{period: periods[0], key: "broken"}]; r.err == nil {
 		t.Error("expected an error for the broken variable")
+	}
+}
+
+// flakyFetcher fails the first failures calls with err, then succeeds.
+type flakyFetcher struct {
+	failures int
+	err      error
+	calls    int
+}
+
+func (f *flakyFetcher) FetchMonthlyData(dataset, variable, productType string, year, month int) (*cds.CDSGridData, error) {
+	f.calls++
+	if f.calls <= f.failures {
+		return nil, f.err
+	}
+	return &cds.CDSGridData{Variable: variable}, nil
+}
+
+func (f *flakyFetcher) FetchDailyStatistics(dataset, variable, statistic, agg string, year, month int) (*cds.CDSGridData, error) {
+	return f.FetchMonthlyData(dataset, variable, "", year, month)
+}
+
+func TestFetchAllGridsRetries(t *testing.T) {
+	m := []mapping.VariableMapping{{CDSVariable: "2m_temperature"}}
+	p := []period.YearMonth{{Year: 2023, Month: 8}}
+	key := gridKey{period: p[0], key: "2m_temperature"}
+
+	// 502 from the CDS gateway twice, then success on the 3rd attempt
+	f := &flakyFetcher{failures: 2, err: errors.New("CDS API returned 502")}
+	if r := fetchAllGrids(f, m, p, 1)[key]; r.err != nil || f.calls != 3 {
+		t.Errorf("transient: err=%v after %d calls, want success after 3", r.err, f.calls)
+	}
+
+	// Still failing after all retries
+	f = &flakyFetcher{failures: 10, err: errors.New("CDS job timed out")}
+	if r := fetchAllGrids(f, m, p, 1)[key]; r.err == nil || f.calls != 3 {
+		t.Errorf("exhausted: err=%v after %d calls, want error after 3", r.err, f.calls)
+	}
+
+	// Permanent errors are not retried
+	f = &flakyFetcher{failures: 10, err: fmt.Errorf("%w: CDS API returned 400", cds.ErrPermanent)}
+	if r := fetchAllGrids(f, m, p, 1)[key]; r.err == nil || f.calls != 1 {
+		t.Errorf("permanent: err=%v after %d calls, want error after 1", r.err, f.calls)
 	}
 }
