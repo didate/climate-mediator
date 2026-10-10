@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/didate/climate-mediator/internal/state"
@@ -50,7 +51,7 @@ func TestStateCounter(t *testing.T) {
 	st.MarkGrid("2m_temperature", "2024-05", "ds", state.StatusSaved, 1, "", 3189, 0)
 	st.MarkGrid("total_precipitation", "2024-05", "ds", state.StatusFailed, 6, "rejected", 0, 3189)
 	hapi := fakeCounter{"2m_dewpoint_temperature 2024-05": 3189, "total_precipitation 2024-05": 3189}
-	c := stateCounter{st: st, hapi: hapi}
+	c := stateCounter{st: st, hapi: hapi, expected: 3189}
 
 	for code, want := range map[string]int{
 		"2m_temperature":          3189, // saved in the state db
@@ -60,5 +61,42 @@ func TestStateCounter(t *testing.T) {
 		if got, _ := c.CountObservations(code, 2024, 5); got != want {
 			t.Errorf("%s = %d, want %d", code, got, want)
 		}
+	}
+}
+
+func TestStateCounterRecordsHAPICompleteGrids(t *testing.T) {
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	hapi := fakeCounter{"2m_temperature 2024-05": 3189, "total_precipitation 2024-05": 1200}
+	c := stateCounter{st: st, hapi: hapi, expected: 3189}
+
+	c.CountObservations("2m_temperature", 2024, 5)
+	c.CountObservations("total_precipitation", 2024, 5)
+
+	// Complete in HAPI: recorded as saved, so the database catches up
+	if g, ok, _ := st.GetGrid("2m_temperature", "2024-05"); !ok || g.Status != state.StatusSaved || g.Saved != 3189 {
+		t.Errorf("complete grid = %+v ok=%v, want saved 3189", g, ok)
+	}
+	// Incomplete: not recorded, the pull fetches it and records the outcome
+	if _, ok, _ := st.GetGrid("total_precipitation", "2024-05"); ok {
+		t.Error("incomplete grid should not be recorded")
+	}
+}
+
+func TestStatusKeepsAmpersand(t *testing.T) {
+	st, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.BeginRun("pull-climate", "tx", "months=45&missingOnly=true")
+
+	rec := httptest.NewRecorder()
+	HandleStatus(rec, httptest.NewRequest("GET", "/climate/status", nil), st)
+	if !strings.Contains(rec.Body.String(), `"months=45&missingOnly=true"`) {
+		t.Errorf("params escaped: %s", rec.Body.String())
 	}
 }

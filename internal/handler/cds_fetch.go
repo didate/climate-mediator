@@ -74,10 +74,13 @@ type observationCounter interface {
 }
 
 // stateCounter answers from the state database, and falls back to counting in
-// HAPI for grids pulled before the database existed.
+// HAPI for grids pulled before the database existed. A grid HAPI shows as
+// complete (expected Observations) is recorded as saved, so the database
+// catches up with earlier runs.
 type stateCounter struct {
-	st   *state.Store
-	hapi observationCounter
+	st       *state.Store
+	hapi     observationCounter
+	expected int
 }
 
 func (c stateCounter) CountObservations(code string, year, month int) (int, error) {
@@ -86,7 +89,11 @@ func (c stateCounter) CountObservations(code string, year, month int) (int, erro
 		return 0, err
 	}
 	if !ok {
-		return c.hapi.CountObservations(code, year, month)
+		n, err := c.hapi.CountObservations(code, year, month)
+		if err == nil && n == c.expected {
+			c.st.MarkGrid(code, period.YearMonth{Year: year, Month: month}.String(), "", state.StatusSaved, 0, "", n, 0)
+		}
+		return n, err
 	}
 	if g.Status != state.StatusSaved {
 		return 0, nil
@@ -143,7 +150,10 @@ func missingGridJobs(counter observationCounter, mappings []mapping.VariableMapp
 // flight overall and at most perDataset per CDS dataset: CDS rejects jobs when
 // an account queues too many requests for one dataset, while different
 // datasets queue separately.
-func fetchAllGrids(c gridFetcher, jobs []gridJob, parallel, perDataset int) map[gridKey]gridResult {
+//
+// onDone, if not nil, is called as soon as each grid is downloaded or has
+// finally failed, so progress is visible during long runs.
+func fetchAllGrids(c gridFetcher, jobs []gridJob, parallel, perDataset int, onDone func(gridJob, gridResult)) map[gridKey]gridResult {
 	if parallel < 1 {
 		parallel = 1
 	}
@@ -202,6 +212,9 @@ func fetchAllGrids(c gridFetcher, jobs []gridJob, parallel, perDataset int) map[
 				log.Printf("Downloaded CDS grid for %s %s: %dx%d in %v", m.Key(), p, len(grid.Lats), len(grid.Lons), r.end.Sub(start))
 			}
 
+			if onDone != nil {
+				onDone(gridJob{m: m, p: p}, r)
+			}
 			mu.Lock()
 			results[gridKey{period: p, key: m.Key()}] = r
 			mu.Unlock()

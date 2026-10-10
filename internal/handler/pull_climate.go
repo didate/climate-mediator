@@ -135,11 +135,17 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 		jobs := allGridJobs(mp.Mappings, periods)
 		skip := map[gridKey]bool{}
 		if missingOnly {
-			jobs, skip = missingGridJobs(stateCounter{st: st, hapi: hapi}, mp.Mappings, mp.Computed, periods, len(orgUnits))
+			jobs, skip = missingGridJobs(stateCounter{st: st, hapi: hapi, expected: len(orgUnits)}, mp.Mappings, mp.Computed, periods, len(orgUnits))
 			log.Printf("Missing only: %d grid(s) to fetch, %d already complete in HAPI", len(jobs), len(skip))
 		}
 		log.Printf("Fetching %d CDS grid(s), %d in parallel, %d per dataset", len(jobs), cfg.CDSMaxParallel, cfg.CDSMaxParallelPerDataset)
-		fetched := fetchAllGrids(cdsClient, jobs, cfg.CDSMaxParallel, cfg.CDSMaxParallelPerDataset)
+		fetched := fetchAllGrids(cdsClient, jobs, cfg.CDSMaxParallel, cfg.CDSMaxParallelPerDataset, func(j gridJob, r gridResult) {
+			if r.err != nil {
+				st.MarkGrid(j.m.Key(), j.p.String(), j.m.CDSDataset, state.StatusFailed, r.attempts, r.err.Error(), 0, len(orgUnits))
+			} else {
+				st.MarkGrid(j.m.Key(), j.p.String(), j.m.CDSDataset, state.StatusDownloaded, r.attempts, "", 0, 0)
+			}
+		})
 
 		for _, p := range periods {
 			// Store grids for computed variables (e.g., relative humidity)
@@ -172,7 +178,6 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 					})
 					totalFailed += len(orgUnits)
 					failedGrids = append(failedGrids, fmt.Sprintf("%s %s", m.Key(), p))
-					st.MarkGrid(m.Key(), p.String(), m.CDSDataset, state.StatusFailed, r.attempts, err.Error(), 0, len(orgUnits))
 					continue
 				}
 
@@ -192,7 +197,6 @@ func HandlePullClimate(w http.ResponseWriter, r *http.Request, cfg *config.Confi
 				})
 
 				grids[m.Key()] = grid
-				st.MarkGrid(m.Key(), p.String(), m.CDSDataset, state.StatusDownloaded, r.attempts, "", 0, 0)
 
 				// Extract values for each org unit and save as Observations
 				startSave := time.Now()

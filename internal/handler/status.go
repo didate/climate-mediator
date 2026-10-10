@@ -61,6 +61,7 @@ func HandleStatus(w http.ResponseWriter, r *http.Request, st *state.Store) {
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false) // keep "&" readable in run params
 	enc.Encode(map[string]interface{}{
 		"summary": sum,
 		"grids":   grids,

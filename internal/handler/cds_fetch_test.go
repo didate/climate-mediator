@@ -65,7 +65,7 @@ func TestFetchAllGrids(t *testing.T) {
 	periods := []period.YearMonth{{Year: 2026, Month: 7}, {Year: 2026, Month: 8}}
 	f := &fakeFetcher{}
 
-	results := fetchAllGrids(f, allGridJobs(mappings, periods), 2, 2)
+	results := fetchAllGrids(f, allGridJobs(mappings, periods), 2, 2, nil)
 
 	if len(results) != 6 {
 		t.Fatalf("got %d results, want 6", len(results))
@@ -120,19 +120,19 @@ func TestFetchAllGridsRetries(t *testing.T) {
 
 	// 502 from the CDS gateway twice, then success on the 3rd attempt
 	f := &flakyFetcher{failures: 2, err: errors.New("CDS API returned 502")}
-	if r := fetchAllGrids(f, allGridJobs(m, p), 1, 1)[key]; r.err != nil || f.calls != 3 {
+	if r := fetchAllGrids(f, allGridJobs(m, p), 1, 1, nil)[key]; r.err != nil || f.calls != 3 {
 		t.Errorf("transient: err=%v after %d calls, want success after 3", r.err, f.calls)
 	}
 
 	// Still failing after all retries
 	f = &flakyFetcher{failures: 10, err: errors.New("CDS job timed out")}
-	if r := fetchAllGrids(f, allGridJobs(m, p), 1, 1)[key]; r.err == nil || f.calls != 3 {
+	if r := fetchAllGrids(f, allGridJobs(m, p), 1, 1, nil)[key]; r.err == nil || f.calls != 3 {
 		t.Errorf("exhausted: err=%v after %d calls, want error after 3", r.err, f.calls)
 	}
 
 	// Permanent errors are not retried
 	f = &flakyFetcher{failures: 10, err: fmt.Errorf("%w: CDS API returned 400", cds.ErrPermanent)}
-	if r := fetchAllGrids(f, allGridJobs(m, p), 1, 1)[key]; r.err == nil || f.calls != 1 {
+	if r := fetchAllGrids(f, allGridJobs(m, p), 1, 1, nil)[key]; r.err == nil || f.calls != 1 {
 		t.Errorf("permanent: err=%v after %d calls, want error after 1", r.err, f.calls)
 	}
 }
@@ -145,7 +145,7 @@ func TestFetchAllGridsQueueLimitRetries(t *testing.T) {
 	// Rejected 4 times for the queue limit: more than the transient retries
 	// allow, but within the queue limit retries
 	f := &flakyFetcher{failures: 4, err: fmt.Errorf("%w: rejected", cds.ErrQueueLimited)}
-	if r := fetchAllGrids(f, allGridJobs(m, p), 1, 1)[key]; r.err != nil || f.calls != 5 {
+	if r := fetchAllGrids(f, allGridJobs(m, p), 1, 1, nil)[key]; r.err != nil || f.calls != 5 {
 		t.Errorf("queue limited: err=%v after %d calls, want success after 5", r.err, f.calls)
 	}
 }
@@ -197,7 +197,7 @@ func TestFetchAllGridsPerDatasetLimit(t *testing.T) {
 	periods := []period.YearMonth{{Year: 2024, Month: 1}, {Year: 2024, Month: 2}, {Year: 2024, Month: 3}}
 	f := &datasetFetcher{inFlight: map[string]int{}, peak: map[string]int{}}
 
-	results := fetchAllGrids(f, allGridJobs(mappings, periods), 4, 1)
+	results := fetchAllGrids(f, allGridJobs(mappings, periods), 4, 1, nil)
 
 	if len(results) != 12 {
 		t.Fatalf("got %d results, want 12", len(results))
@@ -267,5 +267,22 @@ func TestMissingGridJobs(t *testing.T) {
 	}
 	if !skip[gridKey{period: may, key: "2m_temperature"}] || skip[gridKey{period: may, key: "2m_temperature_max"}] {
 		t.Error("May: complete temperature should be skipped, missing Tmax fetched")
+	}
+}
+
+func TestFetchAllGridsReportsEachGrid(t *testing.T) {
+	m := []mapping.VariableMapping{{CDSVariable: "2m_temperature"}, {CDSVariable: "broken"}}
+	p := []period.YearMonth{{Year: 2024, Month: 5}}
+	var mu sync.Mutex
+	done := map[string]bool{} // key -> failed
+
+	fetchAllGrids(&fakeFetcher{}, allGridJobs(m, p), 2, 2, func(j gridJob, r gridResult) {
+		mu.Lock()
+		done[j.m.Key()] = r.err != nil
+		mu.Unlock()
+	})
+
+	if len(done) != 2 || done["2m_temperature"] || !done["broken"] {
+		t.Errorf("onDone calls = %v, want 2m_temperature ok and broken failed", done)
 	}
 }
