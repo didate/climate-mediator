@@ -286,3 +286,57 @@ func TestFetchAllGridsReportsEachGrid(t *testing.T) {
 		t.Errorf("onDone calls = %v, want 2m_temperature ok and broken failed", done)
 	}
 }
+
+// startFetcher signals each download start on started.
+type startFetcher struct{ started chan string }
+
+func (f *startFetcher) FetchMonthlyData(dataset, variable, productType string, year, month int) (*cds.CDSGridData, error) {
+	f.started <- variable
+	return &cds.CDSGridData{Variable: variable}, nil
+}
+
+func (f *startFetcher) FetchDailyStatistics(dataset, variable, statistic, agg string, year, month int) (*cds.CDSGridData, error) {
+	return f.FetchMonthlyData(dataset, variable, "", year, month)
+}
+
+func TestFetchAllGridsReleasesSlotBeforeProcessing(t *testing.T) {
+	m := []mapping.VariableMapping{{CDSVariable: "a"}, {CDSVariable: "b"}}
+	p := []period.YearMonth{{Year: 2024, Month: 5}}
+	f := &startFetcher{started: make(chan string, 2)}
+
+	var mu sync.Mutex
+	overlapped := false
+	first := true
+	finished := make(chan struct{})
+	go func() {
+		fetchAllGrids(f, allGridJobs(m, p), 1, 1, func(j gridJob, r gridResult) {
+			mu.Lock()
+			isFirst := first
+			first = false
+			mu.Unlock()
+			if !isFirst {
+				return
+			}
+			// Still processing the first grid (e.g. saving it to HAPI): the
+			// second download must be able to start with the only slot
+			<-f.started // the first grid's own start
+			select {
+			case <-f.started:
+				mu.Lock()
+				overlapped = true
+				mu.Unlock()
+			case <-time.After(2 * time.Second):
+			}
+		})
+		close(finished)
+	}()
+
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fetchAllGrids blocked: the CDS slot is held while processing a grid")
+	}
+	if !overlapped {
+		t.Error("second download did not start while the first grid was being processed")
+	}
+}

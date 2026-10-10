@@ -152,7 +152,8 @@ func missingGridJobs(counter observationCounter, mappings []mapping.VariableMapp
 // datasets queue separately.
 //
 // onDone, if not nil, is called as soon as each grid is downloaded or has
-// finally failed, so progress is visible during long runs.
+// finally failed, after its CDS slots are released: processing a grid (e.g.
+// saving it to HAPI) never holds back the next downloads.
 func fetchAllGrids(c gridFetcher, jobs []gridJob, parallel, perDataset int, onDone func(gridJob, gridResult)) map[gridKey]gridResult {
 	if parallel < 1 {
 		parallel = 1
@@ -179,47 +180,52 @@ func fetchAllGrids(c gridFetcher, jobs []gridJob, parallel, perDataset int, onDo
 			// a global slot another dataset could use
 			dsem := datasetSems[m.CDSDataset]
 			dsem <- struct{}{}
-			defer func() { <-dsem }()
 			sem <- struct{}{}
-			defer func() { <-sem }()
+			r := fetchWithRetries(c, m, p)
+			<-sem
+			<-dsem
 
-			start := time.Now()
-			grid, err := fetchGrid(c, m, p)
-			transient, limited := 0, 0
-			for err != nil && !errors.Is(err, cds.ErrPermanent) {
-				var delay time.Duration
-				if errors.Is(err, cds.ErrQueueLimited) {
-					if limited == len(queueRetryDelays) {
-						break
-					}
-					delay = queueRetryDelays[limited]
-					limited++
-				} else {
-					if transient == len(fetchRetryDelays) {
-						break
-					}
-					delay = fetchRetryDelays[transient]
-					transient++
-				}
-				log.Printf("CDS fetch for %s %s failed, retrying in %v: %v", m.Key(), p, delay, err)
-				time.Sleep(delay)
-				grid, err = fetchGrid(c, m, p)
-			}
-			r := gridResult{grid: grid, err: err, attempts: 1 + transient + limited, start: start, end: time.Now()}
-			if err != nil {
-				log.Printf("CDS fetch failed for %s %s: %v", m.Key(), p, err)
+			if r.err != nil {
+				log.Printf("CDS fetch failed for %s %s: %v", m.Key(), p, r.err)
 			} else {
-				log.Printf("Downloaded CDS grid for %s %s: %dx%d in %v", m.Key(), p, len(grid.Lats), len(grid.Lons), r.end.Sub(start))
-			}
-
-			if onDone != nil {
-				onDone(gridJob{m: m, p: p}, r)
+				log.Printf("Downloaded CDS grid for %s %s: %dx%d in %v", m.Key(), p, len(r.grid.Lats), len(r.grid.Lons), r.end.Sub(r.start))
 			}
 			mu.Lock()
 			results[gridKey{period: p, key: m.Key()}] = r
 			mu.Unlock()
+			if onDone != nil {
+				onDone(gridJob{m: m, p: p}, r)
+			}
 		}(j.m, j.p)
 	}
 	wg.Wait()
 	return results
+}
+
+// fetchWithRetries downloads one grid, retrying transient failures and
+// rejections for the CDS queue limit, but not permanent errors.
+func fetchWithRetries(c gridFetcher, m mapping.VariableMapping, p period.YearMonth) gridResult {
+	start := time.Now()
+	grid, err := fetchGrid(c, m, p)
+	transient, limited := 0, 0
+	for err != nil && !errors.Is(err, cds.ErrPermanent) {
+		var delay time.Duration
+		if errors.Is(err, cds.ErrQueueLimited) {
+			if limited == len(queueRetryDelays) {
+				break
+			}
+			delay = queueRetryDelays[limited]
+			limited++
+		} else {
+			if transient == len(fetchRetryDelays) {
+				break
+			}
+			delay = fetchRetryDelays[transient]
+			transient++
+		}
+		log.Printf("CDS fetch for %s %s failed, retrying in %v: %v", m.Key(), p, delay, err)
+		time.Sleep(delay)
+		grid, err = fetchGrid(c, m, p)
+	}
+	return gridResult{grid: grid, err: err, attempts: 1 + transient + limited, start: start, end: time.Now()}
 }

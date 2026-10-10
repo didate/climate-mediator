@@ -45,7 +45,8 @@ Monthly mean variables come from `reanalysis-era5-land-monthly-means`. Tmax/Tmin
 - Coastal fallback: searches nearby grid cells when nearest point is ocean (NaN)
 - Supports Point, Polygon, and MultiPolygon geometries: polygons use their area-weighted centroid (all parts, holes subtracted), or a point inside the shape when the centroid falls outside it
 - Stores polygon boundaries on the FHIR Location (`location-boundary-geojson` extension) for future zonal statistics
-- Logs the grid cell used per org unit, and warns when several org units share a cell through the coastal fallback
+- Saves each grid to HAPI as soon as it is downloaded (relative humidity as soon as both inputs of the month arrived): a pull cut short only loses the grids still downloading, and `missingOnly=true` resumes
+- Logs the org units using the coastal fallback, and warns when several of them share a cell
 - Computed variables: relative humidity derived from temperature + dewpoint
 - Configurable variable mapping via `mapping.json`
 - Retry logic on DHIS2 connection errors
